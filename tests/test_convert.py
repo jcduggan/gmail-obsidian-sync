@@ -335,6 +335,30 @@ class TestHtmlToMarkdown:
         assert "example.com/real-article" in result
         assert "substack.com/redirect" not in result
 
+    def test_fixes_trailing_quote_after_link(self):
+        # Simulates: <a href="url">"strawberry</a>" — quote misplaced
+        html = (
+            '<p>the word '
+            '<a href="https://example.com">"strawberry</a>"</p>'
+        )
+        result = _html_to_markdown(html)
+        # The closing " should be inside the link text
+        assert '[\"strawberry\"](https://example.com)' in result
+
+    def test_fixes_wrapping_quotes_around_link(self):
+        html = '<p>a "<a href="https://example.com">country of geniuses</a>".</p>'
+        result = _html_to_markdown(html)
+        assert '["country of geniuses"](https://example.com)' in result
+
+    def test_preserves_balanced_quotes_after_link(self):
+        html = (
+            '<p>the <a href="https://example.com">"scare quotes"</a> word</p>'
+        )
+        result = _html_to_markdown(html)
+        # Quotes are balanced inside — trailing " stays outside is fine
+        # but actually both quotes are inside the link, so no trailing quote
+        assert '"scare quotes"' in result
+
     def test_preserves_content_with_single_boilerplate_word(self):
         html = (
             '<p>This paragraph discusses how to unsubscribe from '

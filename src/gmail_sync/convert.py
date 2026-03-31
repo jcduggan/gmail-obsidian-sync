@@ -195,6 +195,53 @@ class EmailMarkdownConverter(MarkdownConverter):
         escape_underscores = False
 
 
+def _fix_link_punctuation(text: str) -> str:
+    """Fix quotes and punctuation that markdownify misplaces at link boundaries.
+
+    Handles the case where an opening quote is inside the link text but
+    the closing quote lands outside: [..."word](url)" → [..."word"](url)
+    """
+
+    def _fix_trailing_quote(m: re.Match) -> str:
+        link_text = m.group(1)
+        url = m.group(2)
+        quote = m.group(3)
+        # Count unescaped quotes in the link text
+        quote_count = link_text.count(quote)
+        if quote_count % 2 == 1:
+            # Odd number = unmatched opening quote — pull closing quote in
+            return f"[{link_text}{quote}]({url})"
+        # Even = quotes are balanced, leave the trailing quote outside
+        return m.group(0)
+
+    # Pattern 1: Unmatched quote inside link text, closing quote after url
+    # [..."word](url)" → [..."word"](url)
+    text = re.sub(
+        r'\[([^\]]+)\]\(([^)]+)\)(["\u201c\u201d])',
+        _fix_trailing_quote,
+        text,
+    )
+
+    # Pattern 2: Quotes wrapping entire link: "[ text](url)" → "[text"](url)
+    # The opening quote is before [, closing quote after )
+    text = re.sub(
+        r'(["\u201c])(\[[^\]]+\]\([^)]+\))(["\u201d])',
+        _fix_wrapping_quotes,
+        text,
+    )
+    return text
+
+
+def _fix_wrapping_quotes(m: re.Match) -> str:
+    """Move quotes that wrap a markdown link into the link text."""
+    open_q = m.group(1)
+    link = m.group(2)  # [text](url)
+    close_q = m.group(3)
+    # Insert quotes inside the link text: "[text"](url)
+    bracket_end = link.index("](")
+    return link[:1] + open_q + link[1:bracket_end] + close_q + link[bracket_end:]
+
+
 _BOILERPLATE_TEXT_PATTERNS = [
     re.compile(r"(?i)unsubscribe"),
     re.compile(r"(?i)read\s+in\s+app"),
@@ -223,7 +270,9 @@ def _html_to_markdown(html: str) -> str:
     _strip_boilerplate_elements(soup)
 
     converter = EmailMarkdownConverter()
-    return converter.convert_soup(soup)
+    md = converter.convert_soup(soup)
+    md = _fix_link_punctuation(md)
+    return md
 
 
 _SUBSTACK_REDIRECT_2_RE = re.compile(
