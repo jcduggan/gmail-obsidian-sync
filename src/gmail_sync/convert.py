@@ -218,11 +218,69 @@ def _html_to_markdown(html: str) -> str:
 
     _strip_tracking_pixels(soup)
     _strip_hidden_elements(soup)
+    _clean_link_urls(soup)
     _unwrap_layout_tables(soup)
     _strip_boilerplate_elements(soup)
 
     converter = EmailMarkdownConverter()
     return converter.convert_soup(soup)
+
+
+_SUBSTACK_REDIRECT_2_RE = re.compile(
+    r"https://substack\.com/redirect/2/([A-Za-z0-9_-]+)"
+)
+
+# Query params that are pure tracking — safe to strip from any URL
+_TRACKING_PARAMS = {"j", "utm_source", "utm_medium", "utm_campaign", "utm_content", "r", "token"}
+
+
+def _clean_link_urls(soup: BeautifulSoup) -> None:
+    """Clean tracking junk from link URLs in the HTML.
+
+    - Substack /redirect/2/{base64}: decode to get the real destination
+    - Substack /redirect/{uuid}?j=...: strip the ?j= tracking param
+    - All URLs: strip utm_* and other tracking query params
+    """
+    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+
+        # Decode Substack /redirect/2/ URLs (base64 JWT with real URL)
+        m = _SUBSTACK_REDIRECT_2_RE.match(href)
+        if m:
+            real_url = _decode_substack_redirect(m.group(1))
+            if real_url:
+                href = real_url
+
+        # Strip tracking query params from all URLs
+        parsed = urlparse(href)
+        if parsed.query:
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            cleaned = {
+                k: v for k, v in params.items() if k not in _TRACKING_PARAMS
+            }
+            new_query = urlencode(cleaned, doseq=True) if cleaned else ""
+            href = urlunparse(parsed._replace(query=new_query))
+
+        # Strip trailing ? if all params were removed
+        href = href.rstrip("?")
+
+        a["href"] = href
+
+
+def _decode_substack_redirect(encoded: str) -> str | None:
+    """Decode a Substack /redirect/2/ base64 payload to get the real URL."""
+    import json
+
+    # Add padding
+    padded = encoded + "=" * (4 - len(encoded) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded)
+        data = json.loads(decoded)
+        return data.get("e")
+    except (ValueError, json.JSONDecodeError, KeyError):
+        return None
 
 
 def _strip_tracking_pixels(soup: BeautifulSoup) -> None:

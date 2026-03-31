@@ -300,6 +300,41 @@ class TestHtmlToMarkdown:
         assert "Real article content" in result
         assert "Unsubscribe" not in result
 
+    def test_cleans_utm_params_from_links(self):
+        html = (
+            '<p>Click <a href="https://example.com/article'
+            '?utm_source=email&utm_medium=newsletter&id=42">here</a></p>'
+        )
+        result = _html_to_markdown(html)
+        assert "utm_source" not in result
+        assert "utm_medium" not in result
+        assert "id=42" in result
+        assert "[here]" in result
+
+    def test_strips_substack_redirect_uuid_tracking(self):
+        html = (
+            '<p><a href="https://substack.com/redirect/abc-123'
+            '?j=eyJ1IjoiNjJmc3kifQ.abc123">click</a></p>'
+        )
+        result = _html_to_markdown(html)
+        assert "?j=" not in result
+        assert "substack.com/redirect/abc-123" in result
+
+    def test_decodes_substack_redirect_2(self):
+        import base64
+        import json
+
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"e": "https://example.com/real-article"}).encode()
+        ).decode().rstrip("=")
+        html = (
+            f'<p><a href="https://substack.com/redirect/2/{payload}'
+            f'?utm_source=email">click</a></p>'
+        )
+        result = _html_to_markdown(html)
+        assert "example.com/real-article" in result
+        assert "substack.com/redirect" not in result
+
     def test_preserves_content_with_single_boilerplate_word(self):
         html = (
             '<p>This paragraph discusses how to unsubscribe from '
