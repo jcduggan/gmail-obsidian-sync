@@ -160,7 +160,7 @@ _NEWSLETTER_PLAIN_SIGNALS = [
     # Lines of pure invisible characters (Substack tracking padding)
     re.compile(r"^[\u034f\u00ad\u200b-\u200d\u2060\ufeff\s]+$", re.MULTILINE),
     # Bare URLs on their own lines (disconnected from link text)
-    re.compile(r"^<https?://[^>]+>$", re.MULTILINE),
+    re.compile(r"^\s*<https?://[^>]+>\s*$", re.MULTILINE),
     # Substack redirect URLs
     re.compile(r"substack\.com/redirect/"),
     # Newsletter app chrome
@@ -168,6 +168,10 @@ _NEWSLETTER_PLAIN_SIGNALS = [
     # Mailchimp/Beehiiv redirect patterns
     re.compile(r"list-manage\.com/track/click"),
     re.compile(r"(?i)^listen to post", re.MULTILINE),
+    # WordPress tracking URLs
+    re.compile(r"public-api\.wordpress\.com/bar/\?stat=groovemails"),
+    # "Read on blog" / "or Reader" digest chrome
+    re.compile(r"(?i)^Read on blog$", re.MULTILINE),
 ]
 
 _NEWSLETTER_SIGNAL_THRESHOLD = 2
@@ -302,6 +306,24 @@ def _clean_link_urls(soup: BeautifulSoup) -> None:
             if real_url:
                 href = real_url
 
+        # Resolve WordPress tracking redirects
+        if "public-api.wordpress.com/bar/" in href:
+            parsed_wp = urlparse(href)
+            wp_params = parse_qs(parsed_wp.query)
+            redirect_to = wp_params.get("redirect_to", [None])[0]
+            if redirect_to:
+                href = redirect_to
+
+        # Resolve WordPress user_content_redirect (base64 encoded_url param)
+        if "action=user_content_redirect" in href:
+            parsed_wp = urlparse(href)
+            wp_params = parse_qs(parsed_wp.query)
+            encoded_url = wp_params.get("encoded_url", [None])[0]
+            if encoded_url:
+                real = _decode_base64_url(encoded_url)
+                if real:
+                    href = real
+
         # Strip tracking query params from all URLs
         parsed = urlparse(href)
         if parsed.query:
@@ -329,6 +351,15 @@ def _decode_substack_redirect(encoded: str) -> str | None:
         data = json.loads(decoded)
         return data.get("e")
     except (ValueError, json.JSONDecodeError, KeyError):
+        return None
+
+
+def _decode_base64_url(encoded: str) -> str | None:
+    """Decode a plain base64-encoded URL (used by WordPress redirects)."""
+    padded = encoded + "=" * (4 - len(encoded) % 4)
+    try:
+        return base64.urlsafe_b64decode(padded).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
         return None
 
 
@@ -398,6 +429,7 @@ _TRACKING_DOMAINS = re.compile(
     r"substack\.com/redirect|substack\.com/app-link|"
     r"list-manage\.com|mailchi\.mp|"
     r"beehiiv\.com/.*(?:redirect|click)|"
+    r"public-api\.wordpress\.com/bar/|"
     r"email\.mg\.|trk\.|track\.|click\."
 )
 
@@ -480,6 +512,12 @@ _BOILERPLATE_LINE_PATTERNS = [
     re.compile(r"^\s*\[Listen to post[^\]]*\]\(https?://"),
     re.compile(r"^\s*\[Share\]\(https?://"),
     re.compile(r"^\s*photo cred:", re.IGNORECASE),
+    # WordPress digest chrome
+    re.compile(r"^\s*Read on blog\s*$", re.IGNORECASE),
+    re.compile(r"^\s*or Reader\s*$", re.IGNORECASE),
+    re.compile(r"^\s*\[Read on blog\]"),
+    re.compile(r"^\s*\[or Reader\]"),
+    re.compile(r"^\s*\[Reader\]\("),
 ]
 
 
