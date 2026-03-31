@@ -65,12 +65,33 @@ def cmd_status(_args: argparse.Namespace) -> None:
 
 
 def _setup_logging() -> None:
-    """Configure logging for sync commands."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    """Configure logging to stderr and rotating log file."""
+    from logging.handlers import RotatingFileHandler
+    from pathlib import Path
+
+    log_dir = Path.home() / ".gmail-obsidian"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "sync.log"
+
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # Stderr handler
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setFormatter(fmt)
+
+    # Rotating file handler: 5MB max, keep 3 backups
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=5 * 1024 * 1024, backupCount=3
+    )
+    file_handler.setFormatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(stderr_handler)
+    root.addHandler(file_handler)
 
 
 def _format_markdown(email) -> str:

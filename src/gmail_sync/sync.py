@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gmail_sync.client import (
+    AuthExpiredError,
     build_service,
     get_attachment,
     get_message,
@@ -24,10 +25,6 @@ MAX_RETRIES_PER_MESSAGE = 3
 
 class HistoryExpired(Exception):
     """Raised when history.list returns 404 (startHistoryId too old)."""
-
-
-class AuthError(Exception):
-    """Raised when authentication fails and cannot be auto-refreshed."""
 
 
 def initial_sync(service: Any, state: SyncState, count: int = 100) -> SyncState:
@@ -109,8 +106,8 @@ def run_loop(interval: int = 30) -> None:
             log.warning("History expired, performing full resync")
             state.history_id = None
             continue
-        except AuthError as e:
-            log.error("Auth failed: %s. Run 'gmail-sync auth' to re-authenticate.", e)
+        except AuthExpiredError as e:
+            log.error("Auth failed: %s", e)
             sys.exit(1)
         except Exception:
             log.exception("Unexpected error during sync cycle, will retry next cycle")
@@ -119,20 +116,30 @@ def run_loop(interval: int = 30) -> None:
 
 
 def run_once() -> None:
-    """Run a single sync cycle."""
+    """Run a single sync cycle with error handling."""
     service = build_service()
     state = load_state()
 
-    if state.history_id is None:
-        state = initial_sync(service, state)
-    else:
-        state = incremental_sync(service, state)
+    try:
+        if state.history_id is None:
+            initial_sync(service, state)
+        else:
+            incremental_sync(service, state)
+    except HistoryExpired:
+        log.warning("History expired, performing full resync")
+        state.history_id = None
+        save_state(state)
+        initial_sync(service, state)
+    except AuthExpiredError as e:
+        log.error("Auth failed: %s", e)
+        sys.exit(1)
 
 
 def _fetch_history(service: Any, start_history_id: str) -> list[str]:
     """Fetch all new message IDs since start_history_id.
 
-    Paginates through all history records.
+    Paginates through all history records. Uses retry logic for
+    transient errors.
 
     Returns:
         List of message IDs that were added.
@@ -141,6 +148,8 @@ def _fetch_history(service: Any, start_history_id: str) -> list[str]:
         HistoryExpired: If the history ID is too old.
     """
     from googleapiclient.errors import HttpError
+
+    from gmail_sync.client import _execute_with_retry
 
     message_ids: list[str] = []
     page_token = None
@@ -155,7 +164,7 @@ def _fetch_history(service: Any, start_history_id: str) -> list[str]:
             kwargs["pageToken"] = page_token
 
         try:
-            result = service.users().history().list(**kwargs).execute()
+            result = _execute_with_retry(service.users().history().list(**kwargs))
         except HttpError as e:
             if e.resp.status == 404:
                 raise HistoryExpired(
