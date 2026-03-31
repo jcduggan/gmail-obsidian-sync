@@ -1,0 +1,182 @@
+"""Write email content to Obsidian vault as markdown files."""
+
+import os
+import re
+from pathlib import Path
+
+from gmail_sync.convert import Attachment, EmailContent
+
+
+def get_vault_path() -> Path:
+    """Get the Obsidian vault path from environment.
+
+    Returns:
+        Path to the vault root.
+
+    Raises:
+        SystemExit: If OBSIDIAN_VAULT_PATH is not set or doesn't exist.
+    """
+    vault = os.environ.get("OBSIDIAN_VAULT_PATH")
+    if not vault:
+        raise SystemExit(
+            "OBSIDIAN_VAULT_PATH environment variable is not set.\n"
+            "Set it to your Obsidian vault root directory."
+        )
+
+    path = Path(vault)
+    if not path.is_dir():
+        raise SystemExit(f"Vault path does not exist: {path}")
+
+    return path
+
+
+def get_inbox_dir() -> Path:
+    """Get or create the Inbox directory in the vault."""
+    inbox = get_vault_path() / "Inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    return inbox
+
+
+def get_attachments_dir() -> Path:
+    """Get or create the attachments directory in the vault."""
+    att_dir = get_vault_path() / "Inbox" / "_attachments"
+    att_dir.mkdir(parents=True, exist_ok=True)
+    return att_dir
+
+
+def write_email(email: EmailContent, attachment_data: dict[str, bytes] | None = None) -> Path:
+    """Write an email to the vault as a markdown file.
+
+    Args:
+        email: Parsed email content.
+        attachment_data: Map of attachment_id -> raw bytes. If None,
+            attachments are listed but not saved.
+
+    Returns:
+        Path to the written markdown file.
+    """
+    inbox = get_inbox_dir()
+    filename = _make_filename(email, inbox)
+    filepath = inbox / filename
+
+    attachment_refs = _save_attachments(email, attachment_data)
+    content = _format_markdown(email, attachment_refs)
+    _atomic_write(filepath, content)
+
+    return filepath
+
+
+def _make_filename(email: EmailContent, inbox: Path) -> str:
+    """Generate a unique filename for the email.
+
+    Format: {YYYY-MM-DD} {sanitized subject}.md
+    Handles collisions by appending -2, -3, etc.
+    """
+    date_prefix = email.date.strftime("%Y-%m-%d")
+    subject = email.subject or "(no subject)"
+    sanitized = _sanitize_filename(subject)
+    truncated = sanitized[:100]
+
+    base = f"{date_prefix} {truncated}"
+    candidate = f"{base}.md"
+
+    if not (inbox / candidate).exists():
+        return candidate
+
+    counter = 2
+    while (inbox / f"{base}-{counter}.md").exists():
+        counter += 1
+    return f"{base}-{counter}.md"
+
+
+def _sanitize_filename(name: str) -> str:
+    """Remove characters invalid in filenames."""
+    # Replace invalid chars with space (so adjacent words don't merge)
+    cleaned = re.sub(r'[/\\:*?"<>|]', " ", name)
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _save_attachments(
+    email: EmailContent,
+    attachment_data: dict[str, bytes] | None,
+) -> list[tuple[Attachment, str]]:
+    """Save attachments to disk and return (attachment, relative_path) pairs."""
+    if not email.attachments or not attachment_data:
+        return []
+
+    att_dir = get_attachments_dir()
+    refs: list[tuple[Attachment, str]] = []
+
+    for att in email.attachments:
+        data = attachment_data.get(att.attachment_id)
+        if data is None:
+            continue
+
+        safe_name = _sanitize_filename(att.filename) or "attachment"
+        filename = f"{email.gmail_id}_{safe_name}"
+        filepath = att_dir / filename
+        _atomic_write_bytes(filepath, data)
+
+        rel_path = f"_attachments/{filename}"
+        refs.append((att, rel_path))
+
+    return refs
+
+
+def _format_markdown(
+    email: EmailContent,
+    attachment_refs: list[tuple[Attachment, str]],
+) -> str:
+    """Format email as markdown with frontmatter."""
+    date_str = email.date.strftime("%Y-%m-%dT%H:%M:%SZ") if email.date else ""
+    created_str = email.date.strftime("%Y-%m-%d") if email.date else ""
+
+    lines = [
+        "---",
+        f"created: {created_str}",
+        "source: gmail-sync",
+        f'from: "{email.from_addr}"',
+        f'to: "{email.to_addr}"',
+        f"date: {date_str}",
+        f'subject: "{email.subject}"',
+        f'message_id: "{email.message_id}"',
+        f"labels: [{', '.join(email.labels)}]",
+        "---",
+        "",
+        f"# {email.subject}",
+        "",
+        email.body_markdown,
+    ]
+
+    if attachment_refs:
+        lines.extend(["", "## Attachments", ""])
+        for att, rel_path in attachment_refs:
+            if att.mime_type.startswith("image/"):
+                lines.append(f"![[{rel_path}]]")
+            else:
+                lines.append(f"[[{rel_path}|{att.filename}]]")
+
+    if email.attachments and not attachment_refs:
+        lines.extend(["", "## Attachments", ""])
+        for att in email.attachments:
+            lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
+
+    lines.extend(["", "---", "- [ ] read", "- [ ] delete", ""])
+
+    return "\n".join(lines)
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write text content atomically via temp file + rename."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.rename(path)
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write binary content atomically via temp file + rename."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.rename(path)

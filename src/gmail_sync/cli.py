@@ -1,11 +1,14 @@
 """CLI entry point for gmail-obsidian-sync."""
 
 import argparse
+import logging
 import sys
 
 from gmail_sync.auth import run_auth_flow
 from gmail_sync.client import build_service, get_message, get_profile, list_messages
 from gmail_sync.convert import parse_message
+from gmail_sync.state import load_state
+from gmail_sync.sync import run_loop, run_once
 
 
 def cmd_auth(_args: argparse.Namespace) -> None:
@@ -34,13 +37,40 @@ def cmd_fetch_one(_args: argparse.Namespace) -> None:
     print(_format_markdown(email))
 
 
+def cmd_run(args: argparse.Namespace) -> None:
+    """Start the polling sync loop."""
+    _setup_logging()
+    run_loop(interval=args.interval)
+
+
+def cmd_once(_args: argparse.Namespace) -> None:
+    """Run a single sync cycle."""
+    _setup_logging()
+    run_once()
+
+
 def cmd_status(_args: argparse.Namespace) -> None:
     """Show auth and sync status."""
     service = build_service()
     profile = get_profile(service)
+    state = load_state()
     print(f"Account: {profile['emailAddress']}")
     print(f"Messages: {profile['messagesTotal']}")
-    print(f"History ID: {profile['historyId']}")
+    print(f"Gmail history ID: {profile['historyId']}")
+    print(f"Synced history ID: {state.history_id or '(not yet synced)'}")
+    print(f"Last sync: {state.last_sync_at or '(never)'}")
+    print(f"Processed messages: {len(state.processed_ids)}")
+    if state.error_counts:
+        print(f"Messages with errors: {len(state.error_counts)}")
+
+
+def _setup_logging() -> None:
+    """Configure logging for sync commands."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 def _format_markdown(email) -> str:
@@ -85,6 +115,13 @@ def main() -> None:
 
     sub.add_parser("auth", help="Run OAuth browser flow")
     sub.add_parser("fetch-one", help="Fetch most recent email as markdown")
+
+    run_parser = sub.add_parser("run", help="Start polling sync loop")
+    run_parser.add_argument(
+        "--interval", type=int, default=30, help="Polling interval in seconds (default: 30)"
+    )
+
+    sub.add_parser("once", help="Run a single sync cycle")
     sub.add_parser("status", help="Show auth and sync status")
 
     args = parser.parse_args()
@@ -96,6 +133,8 @@ def main() -> None:
     commands = {
         "auth": cmd_auth,
         "fetch-one": cmd_fetch_one,
+        "run": cmd_run,
+        "once": cmd_once,
         "status": cmd_status,
     }
 
