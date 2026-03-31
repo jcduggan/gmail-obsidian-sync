@@ -5,7 +5,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from markdownify import markdownify
+from bs4 import BeautifulSoup
+from markdownify import MarkdownConverter
 
 
 @dataclass
@@ -93,16 +94,22 @@ def _parse_date(date_str: str) -> datetime:
     return datetime.now(UTC)
 
 
+# --- Body source selection ---
+
 def _extract_body(payload: dict) -> str:
     """Extract the message body as markdown.
 
-    Prefers text/plain when substantive. Falls back to text/html
-    converted to markdown.
+    Prefers text/plain for normal emails. For newsletters (detected by
+    tracking chars, bare URLs, etc.), prefers HTML for proper link and
+    heading conversion.
     """
     plain = _find_part_data(payload, "text/plain")
     html = _find_part_data(payload, "text/html")
 
     if plain and _is_substantive(plain):
+        if html and _plain_is_degraded_newsletter(plain):
+            md = _html_to_markdown(html)
+            return _clean_text(md)
         return _clean_text(plain)
 
     if html:
@@ -148,34 +155,254 @@ def _is_substantive(text: str) -> bool:
     return all(not (phrase in lower and len(stripped) < 200) for phrase in stub_phrases)
 
 
-def _html_to_markdown(html: str) -> str:
-    """Convert HTML email body to markdown."""
-    # Remove tracking pixels (1x1 images)
-    html = re.sub(
-        r'<img[^>]*(?:width\s*=\s*["\']?1["\']?\s+height\s*=\s*["\']?1["\']?'
-        r"|height\s*=\s*[\"']?1[\"']?\\s+width\\s*=\\s*[\"']?1[\"']?)[^>]*>",
-        "",
-        html,
-        flags=re.IGNORECASE,
+# Signals that plain text is a degraded newsletter rendering
+_NEWSLETTER_PLAIN_SIGNALS = [
+    # Lines of pure invisible characters (Substack tracking padding)
+    re.compile(r"^[\u034f\u00ad\u200b-\u200d\u2060\ufeff\s]+$", re.MULTILINE),
+    # Bare URLs on their own lines (disconnected from link text)
+    re.compile(r"^<https?://[^>]+>$", re.MULTILINE),
+    # Substack redirect URLs
+    re.compile(r"substack\.com/redirect/"),
+    # Newsletter app chrome
+    re.compile(r"(?i)^read in app$", re.MULTILINE),
+    # Mailchimp/Beehiiv redirect patterns
+    re.compile(r"list-manage\.com/track/click"),
+    re.compile(r"(?i)^listen to post", re.MULTILINE),
+]
+
+_NEWSLETTER_SIGNAL_THRESHOLD = 2
+
+
+def _plain_is_degraded_newsletter(plain: str) -> bool:
+    """Detect if plain text is a degraded newsletter where HTML would be better."""
+    return (
+        sum(1 for p in _NEWSLETTER_PLAIN_SIGNALS if p.search(plain))
+        >= _NEWSLETTER_SIGNAL_THRESHOLD
     )
 
-    # Remove style and script tags entirely
-    html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
 
-    return markdownify(html, strip=["img"], wrap=True, wrap_width=80)
+# --- HTML to Markdown conversion ---
+
+class EmailMarkdownConverter(MarkdownConverter):
+    """Markdown converter optimized for email HTML."""
+
+    class Options(MarkdownConverter.DefaultOptions):
+        heading_style = "atx"
+        strip = ["img"]  # script/style/meta/link decomposed in BeautifulSoup
+        wrap = True
+        wrap_width = 80
+        escape_asterisks = False
+        escape_underscores = False
+
+
+_BOILERPLATE_TEXT_PATTERNS = [
+    re.compile(r"(?i)unsubscribe"),
+    re.compile(r"(?i)read\s+in\s+app"),
+    re.compile(r"(?i)forwarded\s+this\s+email\?\s*subscribe"),
+    re.compile(r"(?i)upgrade\s+to\s+paid"),
+    re.compile(r"(?i)©\s*\d{4}"),
+    re.compile(r"(?i)start\s+writing"),
+    re.compile(r"(?i)manage\s+(?:your\s+)?(?:email\s+)?preferences"),
+    re.compile(r"(?i)view\s+(?:this\s+)?(?:email\s+)?in\s+(?:your\s+)?browser"),
+]
+
+
+def _html_to_markdown(html: str) -> str:
+    """Convert HTML email body to markdown with boilerplate stripping."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove tags whose content should be discarded entirely
+    for tag_name in ("script", "style", "meta", "link"):
+        for el in soup.find_all(tag_name):
+            el.decompose()
+
+    _strip_tracking_pixels(soup)
+    _strip_hidden_elements(soup)
+    _unwrap_layout_tables(soup)
+    _strip_boilerplate_elements(soup)
+
+    converter = EmailMarkdownConverter()
+    return converter.convert_soup(soup)
+
+
+def _strip_tracking_pixels(soup: BeautifulSoup) -> None:
+    """Remove 1x1 and 0x0 tracking pixel images."""
+    for img in soup.find_all("img"):
+        width = str(img.get("width", "")).strip()
+        height = str(img.get("height", "")).strip()
+        if width in ("1", "0") and height in ("1", "0"):
+            img.decompose()
+            continue
+        # Also remove images with no src or empty src (spacer gifs)
+        src = img.get("src", "")
+        if not src or src.endswith("/spacer.gif"):
+            img.decompose()
+
+
+def _strip_hidden_elements(soup: BeautifulSoup) -> None:
+    """Remove elements with display:none or visibility:hidden."""
+    pattern = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.IGNORECASE)
+    for el in soup.find_all(style=pattern):
+        el.decompose()
+
+
+def _unwrap_layout_tables(soup: BeautifulSoup) -> None:
+    """Replace HTML layout tables with their content.
+
+    Email HTML uses tables for layout, not data. These produce ugly
+    markdown table syntax. Unwrap them so the content flows naturally.
+    A table is considered "layout" if it has no <th> headers.
+    """
+    for table in soup.find_all("table"):
+        # Data tables have <th> elements; keep those as markdown tables
+        if table.find("th"):
+            continue
+        # Unwrap the table structure: replace table/tbody/tr/td with divs
+        table.unwrap()
+
+    # Clean up remaining tbody, tr, td tags from unwrapped tables
+    for tag_name in ("tbody", "tr", "td"):
+        for el in soup.find_all(tag_name):
+            el.unwrap()
+
+
+_BLOCK_TAGS = {"div", "table", "section", "footer", "td", "tr", "p"}
+
+
+def _strip_boilerplate_elements(soup: BeautifulSoup) -> None:
+    """Remove newsletter boilerplate elements (subscribe, unsubscribe, etc.)."""
+    for el in soup.find_all(list(_BLOCK_TAGS)):
+        el_text = el.get_text(strip=True)
+        if not el_text or len(el_text) > 500:
+            continue
+        hits = sum(1 for p in _BOILERPLATE_TEXT_PATTERNS if p.search(el_text))
+        if hits >= 2:
+            el.decompose()
+
+
+# --- Text cleanup ---
+
+_INVISIBLE_CHARS = re.compile(
+    "[\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028-\u202f"
+    "\u2060-\u2069\u2800\ufeff\ufff9-\ufffb]+"
+)
+
+_TRACKING_DOMAINS = re.compile(
+    r"substack\.com/redirect|substack\.com/app-link|"
+    r"list-manage\.com|mailchi\.mp|"
+    r"beehiiv\.com/.*(?:redirect|click)|"
+    r"email\.mg\.|trk\.|track\.|click\."
+)
+
+_FORWARDED_HEADER_RE = re.compile(
+    r"^-{5,}\s*Forwarded message\s*-{5,}\s*\n"
+    r"((?:(?:From|To|Date|Subject|Cc|Bcc):.*\n)+)",
+    flags=re.MULTILINE | re.IGNORECASE,
+)
+
+_FOOTER_START_PATTERNS = [
+    re.compile(r"^©\s*\d{4}", re.MULTILINE),
+    re.compile(r"^Unsubscribe$", re.MULTILINE),
+    re.compile(r"^You're receiving this", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^This email was sent to", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^To stop receiving", re.MULTILINE | re.IGNORECASE),
+]
+
+
+def _strip_invisible_chars(text: str) -> str:
+    """Remove invisible Unicode characters used for tracking/formatting."""
+    return _INVISIBLE_CHARS.sub("", text)
+
+
+def _strip_tracking_urls(text: str) -> str:
+    """Remove standalone tracking/redirect URLs on their own lines."""
+    lines = text.split("\n")
+    return "\n".join(
+        line
+        for line in lines
+        if not (
+            re.match(r"^\s*<?https?://\S+>?\s*$", line.strip())
+            and _TRACKING_DOMAINS.search(line)
+        )
+    )
+
+
+def _style_forwarded_headers(text: str) -> str:
+    """Convert forwarded message headers into a blockquote."""
+
+    def _replace(m: re.Match) -> str:
+        header_lines = m.group(1).strip().split("\n")
+        quoted_lines = []
+        for line in header_lines:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                quoted_lines.append(f"> **{key.strip()}:** {value.strip()}")
+        return "> **Forwarded message**\n" + "\n".join(quoted_lines) + "\n"
+
+    return _FORWARDED_HEADER_RE.sub(_replace, text)
+
+
+def _strip_email_footer(text: str) -> str:
+    """Remove email footer (copyright, unsubscribe, mailing info)."""
+    earliest_pos = len(text)
+    for pattern in _FOOTER_START_PATTERNS:
+        match = pattern.search(text)
+        if match and match.start() > len(text) * 0.7:
+            earliest_pos = min(earliest_pos, match.start())
+
+    if earliest_pos < len(text):
+        text = text[:earliest_pos].rstrip()
+    return text
+
+
+_BOILERPLATE_LINE_PATTERNS = [
+    re.compile(r"^\s*\[READ IN APP\]"),
+    re.compile(r"^\s*\[Listen to post"),
+    re.compile(r"^\s*\[Like\]"),
+    re.compile(r"^\s*\[Comment\]"),
+    re.compile(r"^\s*\[Restack\]"),
+    re.compile(r"^\s*\[Upgrade to paid\]"),
+    re.compile(r"^\s*\[Share\]"),
+    re.compile(r"^\s*\[Subscribe\]"),
+    re.compile(r"^\s*Forwarded this email\?\s*\[Subscribe"),
+    re.compile(r"^\s*\[Like\]\(https?://"),
+    re.compile(r"^\s*\[Comment\]\(https?://"),
+    re.compile(r"^\s*\[Restack\]\(https?://"),
+    re.compile(r"^\s*\[Upgrade to paid\]\(https?://"),
+    re.compile(r"^\s*\[READ IN APP\]\(https?://"),
+    re.compile(r"^\s*\[Listen to post[^\]]*\]\(https?://"),
+    re.compile(r"^\s*\[Share\]\(https?://"),
+    re.compile(r"^\s*photo cred:", re.IGNORECASE),
+]
+
+
+def _strip_boilerplate_lines(text: str) -> str:
+    """Remove known newsletter boilerplate lines from markdown output."""
+    lines = text.split("\n")
+    return "\n".join(
+        line
+        for line in lines
+        if not any(p.search(line) for p in _BOILERPLATE_LINE_PATTERNS)
+    )
 
 
 def _clean_text(text: str) -> str:
-    """Clean up converted text: collapse blank lines, strip trailing whitespace."""
+    """Clean up converted text: strip junk, normalize whitespace."""
+    text = _strip_invisible_chars(text)
+    text = re.sub(r"\[image:[^\]]*\]", "", text)
+    text = _strip_tracking_urls(text)
+    text = _strip_boilerplate_lines(text)
+    text = _style_forwarded_headers(text)
+    text = _strip_email_footer(text)
     # Collapse 3+ consecutive blank lines to 2
     text = re.sub(r"\n{3,}", "\n\n", text)
     # Strip trailing whitespace on each line
     lines = [line.rstrip() for line in text.split("\n")]
     # Strip leading/trailing blank lines
-    text = "\n".join(lines).strip()
-    return text
+    return "\n".join(lines).strip()
 
+
+# --- Attachment extraction ---
 
 def _extract_attachments(payload: dict) -> list[Attachment]:
     """Recursively extract attachment metadata from a message payload."""
