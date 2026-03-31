@@ -49,19 +49,52 @@ def cmd_once(_args: argparse.Namespace) -> None:
     run_once()
 
 
+def cmd_install(args: argparse.Namespace) -> None:
+    """Install as a macOS launchd service."""
+    from gmail_sync.launchd import install
+
+    path = install(interval=args.interval)
+    print(f"Installed launchd service at {path}")
+    print(f"gmail-sync will run at login with {args.interval}s polling interval.")
+    print("Check status with: gmail-sync status")
+
+
+def cmd_uninstall(_args: argparse.Namespace) -> None:
+    """Remove the macOS launchd service."""
+    from gmail_sync.launchd import uninstall
+
+    uninstall()
+    print("Service uninstalled. gmail-sync will no longer run at login.")
+
+
 def cmd_status(_args: argparse.Namespace) -> None:
     """Show auth and sync status."""
+    from datetime import UTC, datetime
+
+    from gmail_sync.launchd import get_service_status
+
     service = build_service()
     profile = get_profile(service)
     state = load_state()
+    svc_status = get_service_status()
+
     print(f"Account: {profile['emailAddress']}")
     print(f"Messages: {profile['messagesTotal']}")
     print(f"Gmail history ID: {profile['historyId']}")
     print(f"Synced history ID: {state.history_id or '(not yet synced)'}")
     print(f"Last sync: {state.last_sync_at or '(never)'}")
     print(f"Processed messages: {len(state.processed_ids)}")
+    print(f"Service: {svc_status}")
+
     if state.error_counts:
         print(f"Messages with errors: {len(state.error_counts)}")
+
+    if state.last_sync_at:
+        last = datetime.fromisoformat(state.last_sync_at)
+        age_secs = (datetime.now(UTC) - last).total_seconds()
+        if age_secs > 300:
+            mins = int(age_secs // 60)
+            print(f"WARNING: Last sync was {mins} minutes ago")
 
 
 def _setup_logging() -> None:
@@ -143,6 +176,13 @@ def main() -> None:
     )
 
     sub.add_parser("once", help="Run a single sync cycle")
+
+    install_parser = sub.add_parser("install", help="Install as macOS launchd service")
+    install_parser.add_argument(
+        "--interval", type=int, default=30, help="Polling interval in seconds (default: 30)"
+    )
+
+    sub.add_parser("uninstall", help="Remove macOS launchd service")
     sub.add_parser("status", help="Show auth and sync status")
 
     args = parser.parse_args()
@@ -156,6 +196,8 @@ def main() -> None:
         "fetch-one": cmd_fetch_one,
         "run": cmd_run,
         "once": cmd_once,
+        "install": cmd_install,
+        "uninstall": cmd_uninstall,
         "status": cmd_status,
     }
 
