@@ -177,6 +177,7 @@ def _fetch_history(service: Any, start_history_id: str) -> list[str]:
             "userId": "me",
             "startHistoryId": start_history_id,
             "historyTypes": ["messageAdded"],
+            "labelId": "INBOX",
         }
         if page_token:
             kwargs["pageToken"] = page_token
