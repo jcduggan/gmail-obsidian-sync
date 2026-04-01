@@ -287,14 +287,26 @@ _SUBSTACK_REDIRECT_2_RE = re.compile(
 _TRACKING_PARAMS = {"j", "utm_source", "utm_medium", "utm_campaign", "utm_content", "r", "token"}
 
 
+_REDIRECT_DOMAINS = re.compile(
+    r"substack\.com/redirect/|"
+    r"public-api\.wordpress\.com/bar/|"
+    r"list-manage\.com/track/click|"
+    r"mailchi\.mp/|"
+    r"action=user_content_redirect"
+)
+
+
 def _clean_link_urls(soup: BeautifulSoup) -> None:
     """Clean tracking junk from link URLs in the HTML.
 
-    - Substack /redirect/2/{base64}: decode to get the real destination
-    - Substack /redirect/{uuid}?j=...: strip the ?j= tracking param
-    - All URLs: strip utm_* and other tracking query params
+    Resolves redirect URLs to their real destinations via:
+    1. Local decoding (base64 payloads, query params)
+    2. HTTP HEAD requests for opaque redirects (Substack UUID, etc.)
+    Then strips tracking query params from all URLs.
     """
     from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+    resolved_cache: dict[str, str] = {}
 
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -324,6 +336,10 @@ def _clean_link_urls(soup: BeautifulSoup) -> None:
                 if real:
                     href = real
 
+        # For remaining redirect URLs, resolve via HTTP HEAD
+        if _REDIRECT_DOMAINS.search(href):
+            href = _resolve_redirect(href, resolved_cache)
+
         # Strip tracking query params from all URLs
         parsed = urlparse(href)
         if parsed.query:
@@ -338,6 +354,33 @@ def _clean_link_urls(soup: BeautifulSoup) -> None:
         href = href.rstrip("?")
 
         a["href"] = href
+
+
+def _resolve_redirect(url: str, cache: dict[str, str]) -> str:
+    """Resolve a redirect URL via HTTP HEAD request.
+
+    Uses a cache to avoid re-resolving the same URL within one email.
+    Returns the original URL on any failure (timeout, network error, etc.).
+    """
+    if url in cache:
+        return cache[url]
+
+    import logging
+
+    import requests
+
+    log = logging.getLogger(__name__)
+    try:
+        resp = requests.head(url, allow_redirects=False, timeout=5)
+        location = resp.headers.get("Location")
+        if location and resp.status_code in (301, 302, 303, 307, 308):
+            cache[url] = location
+            return location
+    except (requests.RequestException, OSError):
+        log.debug("Failed to resolve redirect: %s", url)
+
+    cache[url] = url
+    return url
 
 
 def _decode_substack_redirect(encoded: str) -> str | None:
