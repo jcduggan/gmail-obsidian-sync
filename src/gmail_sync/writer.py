@@ -73,6 +73,16 @@ Add senders or domains below to always keep their emails,
 even if they don't match newsletter detection patterns.
 One per line. Use a full email address or just a domain.
 
+## Examples
+
+# Keep all emails from this domain:
+# stratechery.com
+
+# Keep emails from this specific sender only:
+# newsletter@platformer.news
+
+## Your allowlist
+
 """
 
 _OWN_ADDRESSES_SEED = """\
