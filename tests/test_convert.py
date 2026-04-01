@@ -300,6 +300,41 @@ class TestHtmlToMarkdown:
         assert "Real article content" in result
         assert "Unsubscribe" not in result
 
+    def test_merges_adjacent_links_same_url(self):
+        html = '<p><a href="https://example.com">foo </a><a href="https://example.com">bar</a></p>'
+        result = _html_to_markdown(html)
+        assert "[foo bar](https://example.com)" in result
+
+    def test_merges_adjacent_links_with_emphasis(self):
+        html = (
+            '<p><a href="https://example.com">text1 </a>'
+            '<em><a href="https://example.com">text2</a></em></p>'
+        )
+        result = _html_to_markdown(html)
+        assert "[text1 *text2*](https://example.com)" in result
+
+    def test_merges_triple_adjacent_links(self):
+        html = (
+            '<p><a href="https://example.com">must not </a>'
+            '<em><a href="https://example.com">want</a></em>'
+            ' <a href="https://example.com"> to be popular</a></p>'
+        )
+        result = _html_to_markdown(html)
+        assert "must not" in result
+        assert "*want*" in result
+        assert "to be popular" in result
+        # Should be one link, not three
+        assert result.count("](https://example.com)") == 1
+
+    def test_does_not_merge_different_urls(self):
+        html = (
+            '<p><a href="https://a.com">foo</a> '
+            '<a href="https://b.com">bar</a></p>'
+        )
+        result = _html_to_markdown(html)
+        assert "[foo](https://a.com)" in result
+        assert "[bar](https://b.com)" in result
+
     def test_cleans_utm_params_from_links(self):
         html = (
             '<p>Click <a href="https://example.com/article'

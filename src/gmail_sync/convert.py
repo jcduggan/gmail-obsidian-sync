@@ -270,6 +270,7 @@ def _html_to_markdown(html: str) -> str:
     _strip_tracking_pixels(soup)
     _strip_hidden_elements(soup)
     _clean_link_urls(soup)
+    _merge_adjacent_links(soup)
     _unwrap_layout_tables(soup)
     _strip_boilerplate_elements(soup)
 
@@ -416,6 +417,84 @@ def _decode_base64_url(encoded: str) -> str | None:
         return base64.urlsafe_b64decode(padded).decode("utf-8")
     except (ValueError, UnicodeDecodeError):
         return None
+
+
+_EMPHASIS_TAGS = {"em", "strong", "b", "i"}
+
+
+def _merge_adjacent_links(soup: BeautifulSoup) -> None:
+    """Merge adjacent <a> tags that share the same href.
+
+    Email HTML often splits one logical link across multiple <a> tags,
+    sometimes with emphasis wrappers between them. This produces
+    fragmented markdown like [text1](url)*[text2](url)*[text3](url).
+    Merging them pre-conversion gives [text1 *text2* text3](url).
+    """
+    for a in list(soup.find_all("a", href=True)):
+        if a.parent is None:
+            continue
+        href = a.get("href")
+        while _try_merge_next_link(a, href):
+            pass
+
+
+def _try_merge_next_link(a, href: str) -> bool:
+    """Try to merge the next sibling into this <a>. Returns True if merged."""
+    from bs4 import NavigableString
+
+    sibling = a.next_sibling
+
+    # Skip whitespace-only text nodes, but remember them to preserve spacing
+    if isinstance(sibling, NavigableString) and not sibling.strip():
+        ws = sibling
+        after_ws = ws.next_sibling
+        if _is_same_link(after_ws, href):
+            a.append(ws.extract())
+            _absorb_link(a, after_ws)
+            return True
+        if _is_emphasis_wrapping_link(after_ws, href):
+            a.append(ws.extract())
+            _absorb_emphasis_link(a, after_ws, href)
+            return True
+        return False
+
+    # Direct adjacency (no whitespace between)
+    if _is_same_link(sibling, href):
+        _absorb_link(a, sibling)
+        return True
+    if _is_emphasis_wrapping_link(sibling, href):
+        _absorb_emphasis_link(a, sibling, href)
+        return True
+
+    return False
+
+
+def _is_same_link(el, href: str) -> bool:
+    """Check if element is an <a> tag with the given href."""
+    return bool(el and getattr(el, "name", None) == "a" and el.get("href") == href)
+
+
+def _is_emphasis_wrapping_link(el, href: str) -> bool:
+    """Check if element is <em>/<strong>/etc. containing an <a> with the given href."""
+    if not el or getattr(el, "name", None) not in _EMPHASIS_TAGS:
+        return False
+    inner_a = el.find("a", href=href)
+    return inner_a is not None
+
+
+def _absorb_link(a, other_a) -> None:
+    """Move all children of other_a into a, then remove other_a."""
+    for child in list(other_a.children):
+        a.append(child.extract())
+    other_a.decompose()
+
+
+def _absorb_emphasis_link(a, em_el, href: str) -> None:
+    """Unwrap the inner <a> inside em_el, then move em_el into a."""
+    inner_a = em_el.find("a", href=href)
+    if inner_a:
+        inner_a.unwrap()
+    a.append(em_el.extract())
 
 
 def _strip_tracking_pixels(soup: BeautifulSoup) -> None:
