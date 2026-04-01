@@ -1,7 +1,7 @@
 """Tests for the sync engine."""
 
 import base64
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -34,7 +34,8 @@ def _mock_message(msg_id: str, subject: str = "Test") -> dict:
 
 
 class TestInitialSync:
-    def test_fetches_and_processes_messages(self, tmp_path, monkeypatch):
+    @patch("gmail_sync.sync.is_newsletter", return_value=True)
+    def test_fetches_and_processes_messages(self, _mock_classify, tmp_path, monkeypatch):
         monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
 
         service = MagicMock()
@@ -53,13 +54,14 @@ class TestInitialSync:
         state = SyncState()
         monkeypatch.setattr("gmail_sync.sync.save_state", lambda s: None)
 
-        result = initial_sync(service, state, count=10)
+        result = initial_sync(service, state, "me@example.com", count=10)
 
         assert result.history_id == "99999"
         assert "msg_1" in result.processed_ids
         assert "msg_2" in result.processed_ids
 
-    def test_skips_already_processed(self, tmp_path, monkeypatch):
+    @patch("gmail_sync.sync.is_newsletter", return_value=True)
+    def test_skips_already_processed(self, _mock_classify, tmp_path, monkeypatch):
         monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
 
         service = MagicMock()
@@ -75,7 +77,7 @@ class TestInitialSync:
         state = SyncState(processed_ids=["msg_1"])
         monkeypatch.setattr("gmail_sync.sync.save_state", lambda s: None)
 
-        result = initial_sync(service, state, count=10)
+        result = initial_sync(service, state, "me@example.com", count=10)
 
         # msg_1 was already processed, only msg_2 should be new
         assert "msg_2" in result.processed_ids
@@ -142,7 +144,8 @@ class TestFetchHistory:
 
 
 class TestProcessMessage:
-    def test_writes_email_to_vault(self, tmp_path, monkeypatch):
+    @patch("gmail_sync.sync.is_newsletter", return_value=True)
+    def test_writes_email_to_vault(self, _mock_classify, tmp_path, monkeypatch):
         monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
 
         service = MagicMock()
@@ -151,7 +154,7 @@ class TestProcessMessage:
         )
 
         state = SyncState()
-        _process_message(service, "msg_1", state)
+        _process_message(service, "msg_1", state, "me@example.com")
 
         assert "msg_1" in state.processed_ids
         inbox = tmp_path / "Mail" / "Inbox"
@@ -160,14 +163,15 @@ class TestProcessMessage:
         assert len(files) == 1
         assert "Hello World" in files[0].read_text()
 
-    def test_tracks_errors(self, tmp_path, monkeypatch):
+    @patch("gmail_sync.sync.is_newsletter", return_value=True)
+    def test_tracks_errors(self, _mock_classify, tmp_path, monkeypatch):
         monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
 
         service = MagicMock()
         service.users().messages().get().execute.side_effect = Exception("API error")
 
         state = SyncState()
-        _process_message(service, "msg_fail", state)
+        _process_message(service, "msg_fail", state, "me@example.com")
 
         assert "msg_fail" not in state.processed_ids
         assert state.error_counts["msg_fail"] == 1
@@ -178,7 +182,7 @@ class TestProcessMessage:
         service = MagicMock()
         state = SyncState(error_counts={"msg_fail": 3})
 
-        _process_message(service, "msg_fail", state)
+        _process_message(service, "msg_fail", state, "me@example.com")
 
         # Should be marked as processed (skipped) and error cleared
         assert "msg_fail" in state.processed_ids

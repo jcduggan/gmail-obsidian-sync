@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from gmail_sync.classify import is_newsletter
 from gmail_sync.client import (
     AuthExpiredError,
     build_service,
@@ -28,12 +29,15 @@ class HistoryExpired(Exception):
     """Raised when history.list returns 404 (startHistoryId too old)."""
 
 
-def initial_sync(service: Any, state: SyncState, count: int = 100) -> SyncState:
+def initial_sync(
+    service: Any, state: SyncState, user_email: str, count: int = 100
+) -> SyncState:
     """Perform initial sync: fetch recent messages and establish checkpoint.
 
     Args:
         service: Gmail API service resource.
         state: Current sync state (history_id should be None).
+        user_email: Authenticated user's email address.
         count: Number of recent messages to fetch.
 
     Returns:
@@ -49,7 +53,7 @@ def initial_sync(service: Any, state: SyncState, count: int = 100) -> SyncState:
         msg_id = msg_stub["id"]
         if msg_id in state.processed_ids:
             continue
-        _process_message(service, msg_id, state)
+        _process_message(service, msg_id, state, user_email)
 
     profile = get_profile(service)
     state.history_id = profile["historyId"]
@@ -59,7 +63,7 @@ def initial_sync(service: Any, state: SyncState, count: int = 100) -> SyncState:
     return state
 
 
-def incremental_sync(service: Any, state: SyncState) -> SyncState:
+def incremental_sync(service: Any, state: SyncState, user_email: str) -> SyncState:
     """Perform incremental sync using history.list.
 
     Args:
@@ -79,7 +83,7 @@ def incremental_sync(service: Any, state: SyncState) -> SyncState:
         log.info("Processing %d new messages", len(new_ids))
 
     for msg_id in new_ids:
-        _process_message(service, msg_id, state)
+        _process_message(service, msg_id, state, user_email)
 
     state.last_sync_at = datetime.now(UTC).isoformat()
     save_state(state)
@@ -94,15 +98,17 @@ def run_loop(interval: int = 30) -> None:
     """
     service = build_service()
     state = load_state()
+    profile = get_profile(service)
+    user_email = profile["emailAddress"]
 
-    log.info("Starting sync loop (interval=%ds)", interval)
+    log.info("Starting sync loop (interval=%ds, user=%s)", interval, user_email)
 
     while True:
         try:
             if state.history_id is None:
-                state = initial_sync(service, state)
+                state = initial_sync(service, state, user_email)
             else:
-                state = incremental_sync(service, state)
+                state = incremental_sync(service, state, user_email)
         except HistoryExpired:
             log.warning("History expired, performing full resync")
             state.history_id = None
@@ -125,17 +131,19 @@ def run_once() -> None:
     """Run a single sync cycle with error handling."""
     service = build_service()
     state = load_state()
+    profile = get_profile(service)
+    user_email = profile["emailAddress"]
 
     try:
         if state.history_id is None:
-            initial_sync(service, state)
+            initial_sync(service, state, user_email)
         else:
-            incremental_sync(service, state)
+            incremental_sync(service, state, user_email)
     except HistoryExpired:
         log.warning("History expired, performing full resync")
         state.history_id = None
         save_state(state)
-        initial_sync(service, state)
+        initial_sync(service, state, user_email)
     except AuthExpiredError as e:
         log.error("Auth failed: %s", e)
         sys.exit(1)
@@ -191,11 +199,13 @@ def _fetch_history(service: Any, start_history_id: str) -> list[str]:
     return message_ids
 
 
-def _process_message(service: Any, msg_id: str, state: SyncState) -> None:
-    """Fetch, convert, and write a single message.
+def _process_message(
+    service: Any, msg_id: str, state: SyncState, user_email: str
+) -> None:
+    """Fetch, classify, convert, and write a single message.
 
-    Updates state.processed_ids on success. Tracks errors in
-    state.error_counts and writes an error stub after MAX_RETRIES.
+    Skips non-newsletter emails silently. Updates state.processed_ids
+    on success. Tracks errors in state.error_counts.
     """
     # Skip messages that were already tidied (archived/trashed by user)
     if msg_id in state.tidied_ids:
@@ -211,6 +221,13 @@ def _process_message(service: Any, msg_id: str, state: SyncState) -> None:
 
     try:
         msg = get_message(service, msg_id)
+
+        if not is_newsletter(msg, user_email):
+            subject = _get_subject(msg)
+            log.info("Skipping non-newsletter: %s", subject)
+            state.processed_ids.append(msg_id)
+            return
+
         email = parse_message(msg)
 
         attachment_data: dict[str, bytes] = {}
@@ -241,3 +258,11 @@ def _process_message(service: Any, msg_id: str, state: SyncState) -> None:
             MAX_RETRIES_PER_MESSAGE,
             exc_info=True,
         )
+
+
+def _get_subject(msg: dict) -> str:
+    """Extract subject from a raw Gmail API message."""
+    for h in msg.get("payload", {}).get("headers", []):
+        if h["name"] == "Subject":
+            return h["value"]
+    return "(no subject)"
