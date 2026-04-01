@@ -18,7 +18,7 @@ from gmail_sync.client import (
 from gmail_sync.convert import parse_message
 from gmail_sync.state import SyncState, load_state, save_state
 from gmail_sync.tidy import tidy_inbox
-from gmail_sync.writer import write_email
+from gmail_sync.writer import seed_config_files, write_email
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +100,7 @@ def run_loop(interval: int = 30) -> None:
     state = load_state()
     profile = get_profile(service)
     user_email = profile["emailAddress"]
+    seed_config_files()
 
     log.info("Starting sync loop (interval=%ds, user=%s)", interval, user_email)
 
@@ -133,6 +134,7 @@ def run_once() -> None:
     state = load_state()
     profile = get_profile(service)
     user_email = profile["emailAddress"]
+    seed_config_files()
 
     try:
         if state.history_id is None:

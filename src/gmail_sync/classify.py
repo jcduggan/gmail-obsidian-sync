@@ -5,9 +5,9 @@ import logging
 import re
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from gmail_sync.writer import get_config_dir
 
-ALLOWLIST_PATH = Path.home() / ".gmail-obsidian" / "allowlist.txt"
+log = logging.getLogger(__name__)
 
 _NEWSLETTER_DOMAINS = {
     "substack.com",
@@ -84,7 +84,7 @@ def is_newsletter(msg: dict, user_email: str) -> bool:
 
 def _is_allowlisted(from_addr: str) -> bool:
     """Check if sender matches the user's allowlist."""
-    entries = _load_allowlist()
+    entries = _load_allowlist(get_config_dir() / "Allowlist.md")
     if not entries:
         return False
 
@@ -106,13 +106,13 @@ def _is_allowlisted(from_addr: str) -> bool:
     return False
 
 
-def _load_allowlist() -> list[str]:
+def _load_allowlist(path: Path) -> list[str]:
     """Load and parse the allowlist file. Returns lowercase entries."""
-    if not ALLOWLIST_PATH.exists():
+    if not path.exists():
         return []
 
     try:
-        lines = ALLOWLIST_PATH.read_text().splitlines()
+        lines = path.read_text().splitlines()
         return [
             line.strip().lower()
             for line in lines
@@ -120,9 +120,6 @@ def _load_allowlist() -> list[str]:
         ]
     except OSError:
         return []
-
-
-OWN_ADDRESSES_PATH = Path.home() / ".gmail-obsidian" / "own-addresses.txt"
 
 
 def _is_self_forwarded(from_addr: str, user_email: str) -> bool:
@@ -139,16 +136,16 @@ def _is_self_forwarded(from_addr: str, user_email: str) -> bool:
     if sender == user_email.lower():
         return True
 
-    own = _load_own_addresses()
+    own = _load_own_addresses(get_config_dir() / "Own Addresses.md")
     return sender in own
 
 
-def _load_own_addresses() -> set[str]:
+def _load_own_addresses(path: Path) -> set[str]:
     """Load additional own email addresses from config file."""
-    if not OWN_ADDRESSES_PATH.exists():
+    if not path.exists():
         return set()
     try:
-        lines = OWN_ADDRESSES_PATH.read_text().splitlines()
+        lines = path.read_text().splitlines()
         return {
             line.strip().lower()
             for line in lines

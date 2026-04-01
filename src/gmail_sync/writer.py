@@ -59,6 +59,45 @@ def get_archive_dir() -> Path:
     return archive
 
 
+def get_config_dir() -> Path:
+    """Get or create the Mail/Configuration directory in the vault."""
+    config = get_mail_dir() / "Configuration"
+    config.mkdir(parents=True, exist_ok=True)
+    return config
+
+
+_ALLOWLIST_SEED = """\
+# Allowlist
+
+Add senders or domains below to always keep their emails,
+even if they don't match newsletter detection patterns.
+One per line. Use a full email address or just a domain.
+
+"""
+
+_OWN_ADDRESSES_SEED = """\
+# Own Addresses
+
+Add your email addresses below. Emails forwarded FROM these
+addresses are always kept (treated as self-forwarded articles).
+One per line.
+
+"""
+
+
+def seed_config_files() -> None:
+    """Create default config files in Mail/Configuration/ if they don't exist."""
+    config = get_config_dir()
+
+    allowlist = config / "Allowlist.md"
+    if not allowlist.exists():
+        allowlist.write_text(_ALLOWLIST_SEED)
+
+    own_addr = config / "Own Addresses.md"
+    if not own_addr.exists():
+        own_addr.write_text(_OWN_ADDRESSES_SEED)
+
+
 def get_trash_dir() -> Path:
     """Get or create the Mail/Trash directory in the vault."""
     trash = get_mail_dir() / "Trash"

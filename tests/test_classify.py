@@ -39,15 +39,15 @@ def _make_msg(
 
 class TestAllowlist:
     def test_allowlisted_domain(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("gmail_sync.classify.ALLOWLIST_PATH", tmp_path / "allowlist.txt")
-        (tmp_path / "allowlist.txt").write_text("example.com\n")
+        monkeypatch.setattr("gmail_sync.classify.get_config_dir", lambda: tmp_path)
+        (tmp_path / "Allowlist.md").write_text("example.com\n")
 
         msg = _make_msg(from_addr="newsletter@example.com")
         assert is_newsletter(msg, "me@gmail.com")
 
     def test_allowlisted_exact_email(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("gmail_sync.classify.ALLOWLIST_PATH", tmp_path / "allowlist.txt")
-        (tmp_path / "allowlist.txt").write_text("specific@example.com\n")
+        monkeypatch.setattr("gmail_sync.classify.get_config_dir", lambda: tmp_path)
+        (tmp_path / "Allowlist.md").write_text("specific@example.com\n")
 
         msg = _make_msg(from_addr="specific@example.com")
         assert is_newsletter(msg, "me@gmail.com")
@@ -56,14 +56,14 @@ class TestAllowlist:
         assert not is_newsletter(msg2, "me@gmail.com")
 
     def test_allowlist_comments_ignored(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("gmail_sync.classify.ALLOWLIST_PATH", tmp_path / "allowlist.txt")
-        (tmp_path / "allowlist.txt").write_text("# a comment\nexample.com\n")
+        monkeypatch.setattr("gmail_sync.classify.get_config_dir", lambda: tmp_path)
+        (tmp_path / "Allowlist.md").write_text("# a comment\nexample.com\n")
 
         msg = _make_msg(from_addr="news@example.com")
         assert is_newsletter(msg, "me@gmail.com")
 
     def test_no_allowlist_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("gmail_sync.classify.ALLOWLIST_PATH", tmp_path / "missing.txt")
+        monkeypatch.setattr("gmail_sync.classify.get_config_dir", lambda: tmp_path / "empty")
 
         msg = _make_msg(from_addr="news@example.com")
         assert not is_newsletter(msg, "me@gmail.com")
