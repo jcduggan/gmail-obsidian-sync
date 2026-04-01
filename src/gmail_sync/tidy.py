@@ -67,11 +67,12 @@ def _detect_action(filepath: Path) -> str | None:
 
 
 def _extract_gmail_id(md_file: Path) -> str | None:
-    """Extract the Gmail API ID from the file's frontmatter."""
+    """Extract the Gmail API ID from the file's properties block."""
     try:
         text = md_file.read_text(encoding="utf-8")
-        head = "\n".join(text.split("\n")[:20])
-        match = _GMAIL_ID_RE.search(head)
+        # Properties are at the bottom of the file
+        tail = "\n".join(text.split("\n")[-20:])
+        match = _GMAIL_ID_RE.search(tail)
         if match:
             return match.group(1)
     except OSError:

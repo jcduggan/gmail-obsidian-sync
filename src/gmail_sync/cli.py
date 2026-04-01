@@ -145,11 +145,27 @@ def _setup_logging() -> None:
 
 
 def _format_markdown(email) -> str:
-    """Format an EmailContent as markdown with frontmatter."""
+    """Format an EmailContent as markdown with properties at the bottom."""
     date_str = email.date.strftime("%Y-%m-%dT%H:%M:%SZ") if email.date else ""
     created_str = email.date.strftime("%Y-%m-%d") if email.date else ""
 
     lines = [
+        f"# {email.subject}",
+        "",
+        email.body_markdown,
+    ]
+
+    if email.attachments:
+        lines.extend(["", "## Attachments", ""])
+        for att in email.attachments:
+            lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
+
+    lines.extend([
+        "",
+        "---",
+        "- [ ] read",
+        "- [ ] delete",
+        "",
         "---",
         f"created: {created_str}",
         "source: gmail-sync",
@@ -161,17 +177,7 @@ def _format_markdown(email) -> str:
         f"labels: [{', '.join(email.labels)}]",
         "---",
         "",
-        f"# {email.subject}",
-        "",
-        email.body_markdown,
-    ]
-
-    if email.attachments:
-        lines.extend(["", "## Attachments", ""])
-        for att in email.attachments:
-            lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
-
-    lines.extend(["", "---", "- [ ] read", "- [ ] delete", ""])
+    ])
 
     return "\n".join(lines)
 

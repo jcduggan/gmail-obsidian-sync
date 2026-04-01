@@ -164,18 +164,6 @@ def _format_markdown(
     created_str = email.date.strftime("%Y-%m-%d") if email.date else ""
 
     lines = [
-        "---",
-        f"created: {created_str}",
-        "source: gmail-sync",
-        f'from: "{email.from_addr}"',
-        f'to: "{email.to_addr}"',
-        f"date: {date_str}",
-        f'subject: "{email.subject}"',
-        f'message_id: "{email.message_id}"',
-        f"gmail_id: {email.gmail_id}",
-        f"labels: [{', '.join(email.labels)}]",
-        "---",
-        "",
         f"# {email.subject}",
         "",
         email.body_markdown,
@@ -194,7 +182,25 @@ def _format_markdown(
         for att in email.attachments:
             lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
 
-    lines.extend(["", "---", "- [ ] read", "- [ ] delete", ""])
+    lines.extend([
+        "",
+        "---",
+        "- [ ] read",
+        "- [ ] delete",
+        "",
+        "---",
+        f"created: {created_str}",
+        "source: gmail-sync",
+        f'from: "{email.from_addr}"',
+        f'to: "{email.to_addr}"',
+        f"date: {date_str}",
+        f'subject: "{email.subject}"',
+        f'message_id: "{email.message_id}"',
+        f"gmail_id: {email.gmail_id}",
+        f"labels: [{', '.join(email.labels)}]",
+        "---",
+        "",
+    ])
 
     return "\n".join(lines)
 
