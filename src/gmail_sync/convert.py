@@ -360,7 +360,7 @@ def _resolve_redirect(url: str, cache: dict[str, str]) -> str:
     """Resolve a redirect URL via HTTP HEAD request.
 
     Uses a cache to avoid re-resolving the same URL within one email.
-    Returns the original URL on any failure (timeout, network error, etc.).
+    Retries once on failure. Returns the original URL if resolution fails.
     """
     if url in cache:
         return cache[url]
@@ -370,14 +370,26 @@ def _resolve_redirect(url: str, cache: dict[str, str]) -> str:
     import requests
 
     log = logging.getLogger(__name__)
-    try:
-        resp = requests.head(url, allow_redirects=False, timeout=5)
-        location = resp.headers.get("Location")
-        if location and resp.status_code in (301, 302, 303, 307, 308):
-            cache[url] = location
-            return location
-    except (requests.RequestException, OSError):
-        log.debug("Failed to resolve redirect: %s", url)
+    import time
+
+    for attempt in range(3):
+        try:
+            resp = requests.head(url, allow_redirects=False, timeout=10)
+            if resp.status_code == 429:
+                wait = 2 ** attempt
+                log.debug("Rate limited resolving redirect, waiting %ds", wait)
+                time.sleep(wait)
+                continue
+            location = resp.headers.get("Location")
+            if location and resp.status_code in (301, 302, 303, 307, 308):
+                cache[url] = location
+                return location
+            break
+        except (requests.RequestException, OSError):
+            if attempt < 2:
+                time.sleep(0.5)
+                continue
+            log.debug("Failed to resolve redirect: %s", url)
 
     cache[url] = url
     return url
@@ -488,6 +500,11 @@ _FOOTER_START_PATTERNS = [
     re.compile(r"^You're receiving this", re.MULTILINE | re.IGNORECASE),
     re.compile(r"^This email was sent to", re.MULTILINE | re.IGNORECASE),
     re.compile(r"^To stop receiving", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^You're currently a free subscriber", re.MULTILINE | re.IGNORECASE),
+    re.compile(
+        r"(?i)^#{1,6}\s+\*{0,2}If you like my blog",
+        re.MULTILINE,
+    ),
 ]
 
 
