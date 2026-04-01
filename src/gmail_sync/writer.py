@@ -204,35 +204,31 @@ def _format_markdown(
     # Checkboxes
     lines.extend(["", "---", "- [ ] read", "- [ ] delete"])
 
-    # Forwarded message header (collapsed)
+    # Forwarded message header (foldable heading)
     if fwd_block:
         lines.extend([
             "",
-            "<details>",
-            "<summary>Forwarded message</summary>",
+            "###### Forwarded message",
             "",
             fwd_block,
-            "",
-            "</details>",
         ])
 
-    # Properties (collapsed)
+    # Properties (foldable heading)
     lines.extend([
         "",
-        "<details>",
-        "<summary>Properties</summary>",
+        "###### Properties",
         "",
-        f"created: {created_str}",
-        "source: gmail-sync",
-        f'from: "{email.from_addr}"',
-        f'to: "{email.to_addr}"',
-        f"date: {date_str}",
-        f'subject: "{email.subject}"',
-        f'message_id: "{email.message_id}"',
-        f"gmail_id: {email.gmail_id}",
-        f"labels: [{', '.join(email.labels)}]",
-        "",
-        "</details>",
+        "| | |",
+        "|---|---|",
+        f"| created | {created_str} |",
+        "| source | gmail-sync |",
+        f"| from | {email.from_addr} |",
+        f"| to | {email.to_addr} |",
+        f"| date | {date_str} |",
+        f"| subject | {email.subject} |",
+        f"| message_id | {email.message_id} |",
+        f"| gmail_id | {email.gmail_id} |",
+        f"| labels | {', '.join(email.labels)} |",
         "",
     ])
 

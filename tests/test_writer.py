@@ -83,14 +83,14 @@ class TestFormatMarkdown:
         email = _make_email()
         result = _format_markdown(email, [])
 
-        assert "---" in result
-        assert "created: 2026-03-31" in result
-        assert "source: gmail-sync" in result
-        assert 'from: "sender@example.com"' in result
         assert "# Test Subject" in result
         assert "Hello, this is a test email." in result
         assert "- [ ] read" in result
         assert "- [ ] delete" in result
+        assert "###### Properties" in result
+        assert "| created | 2026-03-31 |" in result
+        assert "| source | gmail-sync |" in result
+        assert "| from | sender@example.com |" in result
 
     def test_with_attachment_refs(self):
         att = Attachment(
