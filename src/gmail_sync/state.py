@@ -18,6 +18,7 @@ class SyncState:
     last_sync_at: str | None = None
     processed_ids: list[str] = field(default_factory=list)
     error_counts: dict[str, int] = field(default_factory=dict)
+    tidied_ids: list[str] = field(default_factory=list)
 
 
 def load_state() -> SyncState:
@@ -35,6 +36,7 @@ def load_state() -> SyncState:
         last_sync_at=data.get("last_sync_at"),
         processed_ids=data.get("processed_ids", []),
         error_counts=data.get("error_counts", {}),
+        tidied_ids=data.get("tidied_ids", []),
     )
 
 

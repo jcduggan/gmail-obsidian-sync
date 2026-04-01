@@ -197,6 +197,11 @@ def _process_message(service: Any, msg_id: str, state: SyncState) -> None:
     Updates state.processed_ids on success. Tracks errors in
     state.error_counts and writes an error stub after MAX_RETRIES.
     """
+    # Skip messages that were already tidied (archived/trashed by user)
+    if msg_id in state.tidied_ids:
+        state.processed_ids.append(msg_id)
+        return
+
     error_count = state.error_counts.get(msg_id, 0)
     if error_count >= MAX_RETRIES_PER_MESSAGE:
         log.warning("Skipping message %s after %d failures", msg_id, error_count)

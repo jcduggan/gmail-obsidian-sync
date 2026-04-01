@@ -172,6 +172,7 @@ def _format_markdown(
         f"date: {date_str}",
         f'subject: "{email.subject}"',
         f'message_id: "{email.message_id}"',
+        f"gmail_id: {email.gmail_id}",
         f"labels: [{', '.join(email.labels)}]",
         "---",
         "",

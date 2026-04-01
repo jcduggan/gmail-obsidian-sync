@@ -5,11 +5,13 @@ import re
 import shutil
 from pathlib import Path
 
+from gmail_sync.state import load_state, save_state
 from gmail_sync.writer import get_archive_dir, get_attachments_dir, get_inbox_dir, get_trash_dir
 
 log = logging.getLogger(__name__)
 
 _CHECKED_RE = re.compile(r"^-\s*\[x\]\s*(read|delete)\s*$", re.IGNORECASE | re.MULTILINE)
+_GMAIL_ID_RE = re.compile(r"^gmail_id:\s*(\S+)", re.MULTILINE)
 
 # How many lines from the end to scan for checkboxes
 _FOOTER_LINES = 20
@@ -18,12 +20,24 @@ _FOOTER_LINES = 20
 def tidy_inbox() -> None:
     """Scan Mail/Inbox for checked read/delete boxes and move files."""
     inbox = get_inbox_dir()
+    state = load_state()
+    moved = False
+
     for md_file in sorted(inbox.glob("*.md")):
         action = _detect_action(md_file)
+        if action is None:
+            continue
+        gmail_id = _extract_gmail_id(md_file)
         if action == "delete":
             _move_email(md_file, get_trash_dir())
-        elif action == "read":
+        else:
             _move_email(md_file, get_archive_dir())
+        if gmail_id and gmail_id not in state.tidied_ids:
+            state.tidied_ids.append(gmail_id)
+        moved = True
+
+    if moved:
+        save_state(state)
 
 
 def _detect_action(filepath: Path) -> str | None:
@@ -49,6 +63,19 @@ def _detect_action(filepath: Path) -> str | None:
         return "delete"
     if "read" in actions:
         return "read"
+    return None
+
+
+def _extract_gmail_id(md_file: Path) -> str | None:
+    """Extract the Gmail API ID from the file's frontmatter."""
+    try:
+        text = md_file.read_text(encoding="utf-8")
+        head = "\n".join(text.split("\n")[:20])
+        match = _GMAIL_ID_RE.search(head)
+        if match:
+            return match.group(1)
+    except OSError:
+        pass
     return None
 
 

@@ -10,7 +10,8 @@ def _write_email(inbox: Path, name: str, read_checked: bool = False, delete_chec
     read_box = "- [x] read" if read_checked else "- [ ] read"
     delete_box = "- [x] delete" if delete_checked else "- [ ] delete"
     content = (
-        f"---\ncreated: 2026-04-01\nsource: gmail-sync\n---\n\n"
+        f"---\ncreated: 2026-04-01\nsource: gmail-sync\n"
+        f"gmail_id: gmail_{name.lower().replace(' ', '_')}\n---\n\n"
         f"# {name}\n\nBody.\n\n---\n{read_box}\n{delete_box}\n"
     )
     filepath = inbox / f"2026-04-01 {name}.md"
@@ -137,6 +138,21 @@ class TestTidyInbox:
 
         assert not (inbox / "2026-04-01 Junk.md").exists()
         assert (tmp_path / "Mail" / "Trash" / "2026-04-01 Junk.md").exists()
+
+    def test_records_tidied_gmail_id_in_state(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+        monkeypatch.setattr("gmail_sync.state.STATE_DIR", tmp_path)
+        monkeypatch.setattr("gmail_sync.state.STATE_FILE", tmp_path / "state.json")
+        inbox = tmp_path / "Mail" / "Inbox"
+        inbox.mkdir(parents=True)
+
+        _write_email(inbox, "Newsletter", read_checked=True)
+        tidy_inbox()
+
+        from gmail_sync.state import load_state
+
+        state = load_state()
+        assert "gmail_newsletter" in state.tidied_ids
 
     def test_empty_inbox_noop(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
