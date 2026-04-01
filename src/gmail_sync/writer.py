@@ -6,6 +6,11 @@ from pathlib import Path
 
 from gmail_sync.convert import Attachment, EmailContent
 
+_FORWARDED_BLOCK_RE = re.compile(
+    r"^(> \*\*Forwarded message\*\*\n(?:> \*\*\w+:\*\*.*\n)+)\n*",
+    re.MULTILINE,
+)
+
 
 def get_vault_path() -> Path:
     """Get the Obsidian vault path from environment.
@@ -159,14 +164,28 @@ def _format_markdown(
     email: EmailContent,
     attachment_refs: list[tuple[Attachment, str]],
 ) -> str:
-    """Format email as markdown with frontmatter."""
+    """Format email as markdown with properties at the bottom."""
     date_str = email.date.strftime("%Y-%m-%dT%H:%M:%SZ") if email.date else ""
     created_str = email.date.strftime("%Y-%m-%d") if email.date else ""
 
+    body = email.body_markdown
+    fwd_block = ""
+
+    # Extract forwarded message header from body
+    fwd_match = _FORWARDED_BLOCK_RE.search(body)
+    if fwd_match:
+        fwd_block = fwd_match.group(1).strip()
+        body = body[:fwd_match.start()] + body[fwd_match.end():]
+        body = body.strip()
+
+    # Strip "Fwd:" / "Fwd: " prefix from subject for the title
+    title = re.sub(r"^(?:Fwd?:\s*)+", "", email.subject, flags=re.IGNORECASE).strip()
+    title = title or email.subject
+
     lines = [
-        f"# {email.subject}",
+        f"# {title}",
         "",
-        email.body_markdown,
+        body,
     ]
 
     if attachment_refs:
@@ -182,13 +201,27 @@ def _format_markdown(
         for att in email.attachments:
             lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
 
+    # Checkboxes
+    lines.extend(["", "---", "- [ ] read", "- [ ] delete"])
+
+    # Forwarded message header (collapsed)
+    if fwd_block:
+        lines.extend([
+            "",
+            "<details>",
+            "<summary>Forwarded message</summary>",
+            "",
+            fwd_block,
+            "",
+            "</details>",
+        ])
+
+    # Properties (collapsed)
     lines.extend([
         "",
-        "---",
-        "- [ ] read",
-        "- [ ] delete",
+        "<details>",
+        "<summary>Properties</summary>",
         "",
-        "---",
         f"created: {created_str}",
         "source: gmail-sync",
         f'from: "{email.from_addr}"',
@@ -198,7 +231,8 @@ def _format_markdown(
         f'message_id: "{email.message_id}"',
         f"gmail_id: {email.gmail_id}",
         f"labels: [{', '.join(email.labels)}]",
-        "---",
+        "",
+        "</details>",
         "",
     ])
 

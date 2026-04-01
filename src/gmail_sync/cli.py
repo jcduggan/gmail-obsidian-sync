@@ -145,41 +145,10 @@ def _setup_logging() -> None:
 
 
 def _format_markdown(email) -> str:
-    """Format an EmailContent as markdown with properties at the bottom."""
-    date_str = email.date.strftime("%Y-%m-%dT%H:%M:%SZ") if email.date else ""
-    created_str = email.date.strftime("%Y-%m-%d") if email.date else ""
+    """Format an EmailContent as markdown (delegates to writer)."""
+    from gmail_sync.writer import _format_markdown as fmt
 
-    lines = [
-        f"# {email.subject}",
-        "",
-        email.body_markdown,
-    ]
-
-    if email.attachments:
-        lines.extend(["", "## Attachments", ""])
-        for att in email.attachments:
-            lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
-
-    lines.extend([
-        "",
-        "---",
-        "- [ ] read",
-        "- [ ] delete",
-        "",
-        "---",
-        f"created: {created_str}",
-        "source: gmail-sync",
-        f'from: "{email.from_addr}"',
-        f'to: "{email.to_addr}"',
-        f"date: {date_str}",
-        f'subject: "{email.subject}"',
-        f'message_id: "{email.message_id}"',
-        f"labels: [{', '.join(email.labels)}]",
-        "---",
-        "",
-    ])
-
-    return "\n".join(lines)
+    return fmt(email, [])
 
 
 def main() -> None:
