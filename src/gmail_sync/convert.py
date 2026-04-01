@@ -193,8 +193,7 @@ class EmailMarkdownConverter(MarkdownConverter):
     class Options(MarkdownConverter.DefaultOptions):
         heading_style = "atx"
         strip = ["img"]  # script/style/meta/link decomposed in BeautifulSoup
-        wrap = True
-        wrap_width = 80
+        wrap = False  # Obsidian does its own soft-wrapping; hard wraps break link text
         escape_asterisks = False
         escape_underscores = False
 
