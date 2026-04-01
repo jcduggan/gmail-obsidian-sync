@@ -17,6 +17,7 @@ from gmail_sync.client import (
 )
 from gmail_sync.convert import parse_message
 from gmail_sync.state import SyncState, load_state, save_state
+from gmail_sync.tags import generate_tags
 from gmail_sync.tidy import tidy_inbox
 from gmail_sync.writer import seed_config_files, write_email
 
@@ -246,7 +247,8 @@ def _process_message(
                     exc_info=True,
                 )
 
-        path = write_email(email, attachment_data if attachment_data else None)
+        tags = generate_tags(email)
+        path = write_email(email, attachment_data if attachment_data else None, tags)
         log.info("Wrote %s", path.name)
 
         state.processed_ids.append(msg_id)

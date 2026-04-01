@@ -130,6 +130,68 @@ at the top of the article for quick reference.
 """
 
 
+_TAGS_CONFIG_SEED = """\
+# Tags
+
+Rules for auto-tagging articles. Edit freely — changes take
+effect on the next sync cycle.
+
+Author and publication tags are always generated automatically.
+Keyword and theme tags below are applied when matching terms
+appear in the article body (case-insensitive).
+
+## Keyword Tags
+
+Map specific terms to a tag. Format: `term → #tag`
+
+RSAC → #RSAC
+Kubernetes → #kubernetes
+CRISPR → #biotech
+
+## Theme Tags
+
+Group related keywords under one tag. If ANY keyword in the
+group appears in the article, the tag is applied.
+
+### #AI-infrastructure
+GPU
+TPU
+tensor core
+data center
+NVIDIA
+CUDA
+inference
+training cluster
+machine learning infrastructure
+
+### #cybersecurity
+CISO
+threat detection
+zero-day
+vulnerability
+SOC
+incident response
+penetration testing
+security operations
+
+### #economics
+monetary policy
+inflation
+interest rate
+labor market
+GDP
+fiscal policy
+central bank
+
+### #writing
+LLM writing
+prose style
+creative writing
+essay
+literary criticism
+"""
+
+
 def seed_config_files() -> None:
     """Create default config files in Mail/Configuration/ if they don't exist."""
     config = get_config_dir()
@@ -145,6 +207,10 @@ def seed_config_files() -> None:
     guide = config / "How to Annotate.md"
     if not guide.exists():
         guide.write_text(_ANNOTATION_GUIDE_SEED)
+
+    tags_config = config / "Tags.md"
+    if not tags_config.exists():
+        tags_config.write_text(_TAGS_CONFIG_SEED)
 
 
 def get_trash_dir() -> Path:
@@ -174,13 +240,18 @@ def get_attachments_dir(parent: Path | None = None) -> Path:
     return att_dir
 
 
-def write_email(email: EmailContent, attachment_data: dict[str, bytes] | None = None) -> Path:
+def write_email(
+    email: EmailContent,
+    attachment_data: dict[str, bytes] | None = None,
+    tags: list[str] | None = None,
+) -> Path:
     """Write an email to the vault as a markdown file.
 
     Args:
         email: Parsed email content.
         attachment_data: Map of attachment_id -> raw bytes. If None,
             attachments are listed but not saved.
+        tags: Auto-generated tags to include in the Tags section.
 
     Returns:
         Path to the written markdown file.
@@ -190,7 +261,7 @@ def write_email(email: EmailContent, attachment_data: dict[str, bytes] | None = 
     filepath = inbox / filename
 
     attachment_refs = _save_attachments(email, attachment_data)
-    content = _format_markdown(email, attachment_refs)
+    content = _format_markdown(email, attachment_refs, tags or [])
     _atomic_write(filepath, content)
 
     # Save an original copy for diffing when user annotates and archives
@@ -262,6 +333,7 @@ def _save_attachments(
 def _format_markdown(
     email: EmailContent,
     attachment_refs: list[tuple[Attachment, str]],
+    tags: list[str] | None = None,
 ) -> str:
     """Format email as markdown with properties at the bottom."""
     date_str = email.date.strftime("%Y-%m-%dT%H:%M:%SZ") if email.date else ""
@@ -301,6 +373,7 @@ def _format_markdown(
             lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
 
     # Checkboxes and tags
+    tag_line = " ".join(f"#{t}" for t in (tags or []))
     lines.extend([
         "",
         "---",
@@ -308,6 +381,8 @@ def _format_markdown(
         "- [ ] delete",
         "",
         "###### Tags",
+        "",
+        tag_line,
         "",
     ])
 
