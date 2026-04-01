@@ -1,5 +1,6 @@
 """Write email content to Obsidian vault as markdown files."""
 
+import json
 import os
 import re
 from pathlib import Path
@@ -11,21 +12,47 @@ _FORWARDED_BLOCK_RE = re.compile(
     re.MULTILINE,
 )
 
+CONFIG_DIR = Path.home() / ".gmail-obsidian"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+
+def load_config() -> dict:
+    """Load persistent config from ~/.gmail-obsidian/config.json."""
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def save_config(config: dict) -> None:
+    """Save persistent config to ~/.gmail-obsidian/config.json."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2))
+    tmp.rename(CONFIG_FILE)
+
 
 def get_vault_path() -> Path:
-    """Get the Obsidian vault path from environment.
+    """Get the Obsidian vault path.
+
+    Checks (in order): OBSIDIAN_VAULT_PATH env var, then config.json.
 
     Returns:
         Path to the vault root.
 
     Raises:
-        SystemExit: If OBSIDIAN_VAULT_PATH is not set or doesn't exist.
+        SystemExit: If vault path is not configured or doesn't exist.
     """
     vault = os.environ.get("OBSIDIAN_VAULT_PATH")
     if not vault:
+        config = load_config()
+        vault = config.get("vault_path")
+    if not vault:
         raise SystemExit(
-            "OBSIDIAN_VAULT_PATH environment variable is not set.\n"
-            "Set it to your Obsidian vault root directory."
+            "Obsidian vault path is not configured.\n"
+            "Run 'gmail-sync setup' to configure, or set OBSIDIAN_VAULT_PATH."
         )
 
     path = Path(vault)

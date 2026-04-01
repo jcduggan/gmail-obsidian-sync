@@ -3,12 +3,113 @@
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from gmail_sync.auth import run_auth_flow
 from gmail_sync.client import build_service, get_message, get_profile, list_messages
 from gmail_sync.convert import parse_message
 from gmail_sync.state import load_state
 from gmail_sync.sync import run_loop, run_once
+
+
+def cmd_setup(_args: argparse.Namespace) -> None:
+    """Guided first-time setup."""
+    import shutil
+
+    from gmail_sync.auth import CREDENTIALS_FILE, run_auth_flow
+    from gmail_sync.launchd import install
+    from gmail_sync.writer import CONFIG_DIR, save_config, seed_config_files
+
+    print("Gmail-to-Obsidian Sync Setup")
+    print("=" * 35)
+    print()
+
+    # Step 1: Vault path
+    print("Step 1: Obsidian vault path")
+    vault = input("  Enter the path to your Obsidian vault: ").strip()
+    vault = str(Path(vault).expanduser().resolve())
+    if not Path(vault).is_dir():
+        print(f"  Error: {vault} does not exist.")
+        sys.exit(1)
+    config = {"vault_path": vault}
+    save_config(config)
+    print(f"  Saved. Will write to {vault}/Mail/")
+    print()
+
+    # Seed config files now that vault path is set
+    import os
+
+    os.environ["OBSIDIAN_VAULT_PATH"] = vault
+    seed_config_files()
+
+    # Step 2: Credentials
+    print("Step 2: Gmail API credentials")
+    if CREDENTIALS_FILE.exists():
+        print(f"  Found existing credentials at {CREDENTIALS_FILE}")
+    else:
+        print("  You need a Google Cloud OAuth credential file.")
+        print("  1. Go to https://console.cloud.google.com/")
+        print("  2. Create a project, enable the Gmail API")
+        print("  3. Create OAuth credentials (Desktop app type)")
+        print("  4. Download the JSON file")
+        print()
+        cred_path = input("  Enter path to downloaded credentials JSON: ").strip()
+        cred_path = str(Path(cred_path).expanduser().resolve())
+        if not Path(cred_path).exists():
+            print(f"  Error: {cred_path} does not exist.")
+            sys.exit(1)
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cred_path, str(CREDENTIALS_FILE))
+        print(f"  Saved to {CREDENTIALS_FILE}")
+    print()
+
+    # Step 3: Auth
+    print("Step 3: Authenticate")
+    print("  Opening browser for Google sign-in...")
+    creds = run_auth_flow()
+    service = build_service(creds)
+    profile = get_profile(service)
+    user_email = profile["emailAddress"]
+    print(f"  Authenticated as {user_email}")
+    print()
+
+    # Step 4: Own addresses
+    print("Step 4: Own addresses (optional)")
+    print("  If you forward emails from another account,")
+    fwd = input("  enter that email (or press Enter to skip): ").strip()
+    if fwd:
+        own_path = Path(vault) / "Mail" / "Configuration" / "Own Addresses.md"
+        if own_path.exists():
+            text = own_path.read_text()
+            if fwd not in text:
+                text = text.rstrip() + f"\n{fwd}\n"
+                own_path.write_text(text)
+        print(f"  Added {fwd}")
+    print()
+
+    # Step 5: Initial sync
+    print("Step 5: Initial sync")
+    print("  Fetching recent emails...")
+    _setup_logging()
+    run_once()
+    inbox = Path(vault) / "Mail" / "Inbox"
+    count = len(list(inbox.glob("*.md"))) if inbox.exists() else 0
+    print(f"  Synced {count} newsletters to Mail/Inbox/")
+    print()
+
+    # Step 6: Service
+    print("Step 6: Install background service (optional)")
+    svc = input("  Install as a background service? [Y/n]: ").strip().lower()
+    if svc in ("", "y", "yes"):
+        try:
+            install()
+            print("  Installed. Emails will sync every 30 seconds.")
+        except Exception as e:
+            print(f"  Could not install service: {e}")
+            print("  You can run 'gmail-sync run' manually instead.")
+    print()
+
+    print("Setup complete! Open your vault in Obsidian to see your newsletters.")
 
 
 def cmd_auth(_args: argparse.Namespace) -> None:
@@ -159,6 +260,7 @@ def main() -> None:
     )
     sub = parser.add_subparsers(dest="command")
 
+    sub.add_parser("setup", help="Guided first-time setup")
     sub.add_parser("auth", help="Run OAuth browser flow")
     sub.add_parser("fetch-one", help="Fetch most recent email as markdown")
 
@@ -186,6 +288,7 @@ def main() -> None:
         sys.exit(1)
 
     commands = {
+        "setup": cmd_setup,
         "auth": cmd_auth,
         "fetch-one": cmd_fetch_one,
         "run": cmd_run,

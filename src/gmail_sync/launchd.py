@@ -7,8 +7,24 @@ import subprocess
 import sys
 from pathlib import Path
 
+from gmail_sync.writer import load_config
+
 LABEL = "com.gmail-obsidian-sync"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+
+
+def _get_vault_path_for_plist() -> str:
+    """Get vault path for the launchd plist from env or config."""
+    vault = os.environ.get("OBSIDIAN_VAULT_PATH")
+    if vault:
+        return vault
+    config = load_config()
+    vault = config.get("vault_path")
+    if vault:
+        return vault
+    raise FileNotFoundError(
+        "Obsidian vault path not configured. Run 'gmail-sync setup' first."
+    )
 
 
 def get_executable_path() -> Path:
@@ -52,10 +68,7 @@ def generate_plist(interval: int = 30) -> dict:
             "SuccessfulExit": False,
         },
         "EnvironmentVariables": {
-            "OBSIDIAN_VAULT_PATH": os.environ.get(
-                "OBSIDIAN_VAULT_PATH",
-                str(Path.home() / "Documents" / "jcdmmcc"),
-            ),
+            "OBSIDIAN_VAULT_PATH": _get_vault_path_for_plist(),
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
         },
         "StandardOutPath": str(log_dir / "launchd-stdout.log"),

@@ -170,11 +170,12 @@ class TestWriteEmail:
         content = path.read_text()
         assert "[[_attachments/msg_test_123_doc.pdf|doc.pdf]]" in content
 
-    def test_no_vault_path_exits(self, monkeypatch):
+    def test_no_vault_path_exits(self, tmp_path, monkeypatch):
         monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)
+        monkeypatch.setattr("gmail_sync.writer.CONFIG_FILE", tmp_path / "missing.json")
         import pytest
 
-        with pytest.raises(SystemExit, match="OBSIDIAN_VAULT_PATH"):
+        with pytest.raises(SystemExit, match="not configured"):
             write_email(_make_email())
 
     def test_nonexistent_vault_exits(self, tmp_path, monkeypatch):
