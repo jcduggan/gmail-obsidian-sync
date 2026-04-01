@@ -20,6 +20,9 @@ _FWD_FROM_RE = re.compile(
 _SUBSTACK_DOMAIN_RE = re.compile(r"^(\w[\w-]*)\.substack\.com$", re.IGNORECASE)
 
 
+_TAG_IN_TEXT_RE = re.compile(r"#([\w/-]+)")
+
+
 def generate_tags(email: EmailContent) -> list[str]:
     """Generate auto-tags for an email from all sources."""
     tags: list[str] = []
@@ -28,6 +31,107 @@ def generate_tags(email: EmailContent) -> list[str]:
     tags.extend(_keyword_tags(email.body_markdown, config))
     tags.extend(_theme_tags(email.body_markdown, config))
     return sorted(set(tags))
+
+
+def extract_tags_from_section(file_text: str) -> set[str]:
+    """Extract all #tags from the Tags section of a file."""
+    in_tags = False
+    tags: set[str] = set()
+    for line in file_text.split("\n"):
+        if line.strip() == "###### Tags":
+            in_tags = True
+            continue
+        if in_tags:
+            stripped = line.strip()
+            # Stop at the next heading (# followed by space) or horizontal rule
+            # Tags like #RSAC start with # but aren't headings
+            is_heading = re.match(r"^#{1,6}\s", stripped)
+            if is_heading or stripped == "---":
+                break
+            for m in _TAG_IN_TEXT_RE.finditer(line):
+                tags.add(m.group(1))
+    return tags
+
+
+def learn_user_tags(file_text: str, auto_tags: list[str]) -> None:
+    """Learn new user-added tags back into Tags.md config.
+
+    Compares tags in the file's Tags section against the auto-generated
+    set. Any tags the user added manually get written into the keyword
+    section of Tags.md so they auto-apply to future articles.
+    """
+    file_tags = extract_tags_from_section(file_text)
+    auto_set = set(auto_tags)
+
+    # User tags = tags in the file that weren't auto-generated
+    # Skip author/pub tags (those are always auto-generated)
+    user_tags = {
+        t for t in file_tags - auto_set
+        if not t.startswith("author/") and not t.startswith("pub/")
+    }
+
+    if not user_tags:
+        return
+
+    config_path = get_config_dir() / "Tags.md"
+    if not config_path.exists():
+        return
+
+    # Check which user tags are already in the config
+    config = _load_tag_config()
+    existing_tags = set(config.keyword_tags.values())
+    for tag, _ in config.theme_tags:
+        existing_tags.add(tag)
+
+    new_tags = {t for t in user_tags if t not in existing_tags}
+    if not new_tags:
+        return
+
+    # Append new keyword entries to Tags.md
+    text = config_path.read_text(encoding="utf-8")
+
+    additions = []
+    for tag in sorted(new_tags):
+        # Use the tag name (without hyphens) as the keyword
+        keyword = tag.replace("-", " ")
+        additions.append(f"{keyword} → #{tag}")
+
+    # Find the Keyword Tags section and append there
+    marker = "## Keyword Tags"
+    if marker in text:
+        # Insert after the last non-empty line in the keyword section
+        lines = text.split("\n")
+        insert_idx = None
+        in_section = False
+        for i, line in enumerate(lines):
+            if marker in line:
+                in_section = True
+                continue
+            if in_section:
+                if line.startswith("## "):
+                    insert_idx = i
+                    break
+                if line.strip():
+                    insert_idx = i + 1
+
+        if insert_idx is None:
+            insert_idx = len(lines)
+
+        for j, addition in enumerate(additions):
+            lines.insert(insert_idx + j, addition)
+
+        text = "\n".join(lines)
+    else:
+        # No keyword section found — append at end
+        text = text.rstrip() + "\n\n## Keyword Tags\n\n"
+        text += "\n".join(additions) + "\n"
+
+    config_path.write_text(text, encoding="utf-8")
+
+    # Invalidate cache so next load picks up the changes
+    _TAG_CONFIG_CACHE.clear()
+
+    log.info("Learned %d new tag(s) from user: %s", len(new_tags), ", ".join(sorted(new_tags)))
 
 
 def _author_publication_tags(email: EmailContent) -> list[str]:

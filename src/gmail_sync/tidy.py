@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from gmail_sync.state import load_state, save_state
+from gmail_sync.tags import learn_user_tags
 from gmail_sync.writer import (
     get_archive_dir,
     get_attachments_dir,
@@ -42,6 +43,8 @@ def tidy_inbox() -> None:
         if action == "delete":
             _move_email(md_file, get_trash_dir())
         else:
+            # Learn user-added tags before formatting annotations
+            _learn_tags_from_file(md_file, original_file)
             _apply_annotations(md_file, original_file)
             _move_email(md_file, get_archive_dir())
 
@@ -95,6 +98,27 @@ def _extract_gmail_id(md_file: Path) -> str | None:
     except OSError:
         pass
     return None
+
+
+def _learn_tags_from_file(modified_file: Path, original_file: Path) -> None:
+    """Extract user-added tags and learn them into Tags.md config."""
+    from gmail_sync.tags import extract_tags_from_section
+
+    try:
+        modified_text = modified_file.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    # Get the auto-generated tags from the original
+    auto_tags: list[str] = []
+    if original_file.exists():
+        try:
+            original_text = original_file.read_text(encoding="utf-8")
+            auto_tags = sorted(extract_tags_from_section(original_text))
+        except OSError:
+            pass
+
+    learn_user_tags(modified_text, auto_tags)
 
 
 def _apply_annotations(modified_file: Path, original_file: Path) -> None:
