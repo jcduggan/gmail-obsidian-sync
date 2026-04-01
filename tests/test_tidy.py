@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from gmail_sync.tidy import (
+    _append_to_daily_note,
     _apply_annotations,
     _detect_action,
     _move_email,
@@ -165,6 +166,77 @@ class TestTidyInbox:
         inbox = tmp_path / "Mail" / "Inbox"
         inbox.mkdir(parents=True)
         tidy_inbox()  # should not raise
+
+
+class TestAppendToDailyNote:
+    def test_creates_daily_note_with_highlights(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+        # Enable daily notes
+        config_dir = tmp_path / "Mail" / "Configuration"
+        config_dir.mkdir(parents=True)
+        (config_dir / "Settings.md").write_text("daily notes: on\n")
+
+        md_file = tmp_path / "test.md"
+        md_file.write_text("# My Article\n\nSome ==great insight== here.\n")
+
+        _append_to_daily_note(md_file, "Archive/test.md")
+
+        # Find the daily note
+        daily_notes = list(tmp_path.glob("2*.md"))
+        assert len(daily_notes) == 1
+        content = daily_notes[0].read_text()
+        assert "[[Mail/Archive/test.md|My Article]]" in content
+        assert "==great insight==" in content
+
+    def test_appends_with_separator(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+        config_dir = tmp_path / "Mail" / "Configuration"
+        config_dir.mkdir(parents=True)
+        (config_dir / "Settings.md").write_text("daily notes: on\n")
+
+        from datetime import UTC, datetime
+
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        daily = tmp_path / f"{today}.md"
+        daily.write_text(f"# {today}\n\nExisting content.\n")
+
+        md_file = tmp_path / "test.md"
+        md_file.write_text("# Article\n\nSome ==highlight== here.\n")
+
+        _append_to_daily_note(md_file, "Archive/test.md")
+
+        content = daily.read_text()
+        assert "Existing content." in content
+        assert "---" in content
+        assert "==highlight==" in content
+
+    def test_skips_when_disabled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+        config_dir = tmp_path / "Mail" / "Configuration"
+        config_dir.mkdir(parents=True)
+        (config_dir / "Settings.md").write_text("daily notes: off\n")
+
+        md_file = tmp_path / "test.md"
+        md_file.write_text("# Article\n\nSome ==highlight== here.\n")
+
+        _append_to_daily_note(md_file, "Archive/test.md")
+
+        daily_notes = list(tmp_path.glob("2*.md"))
+        assert len(daily_notes) == 0
+
+    def test_skips_when_no_annotations(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+        config_dir = tmp_path / "Mail" / "Configuration"
+        config_dir.mkdir(parents=True)
+        (config_dir / "Settings.md").write_text("daily notes: on\n")
+
+        md_file = tmp_path / "test.md"
+        md_file.write_text("# Article\n\nNo annotations here.\n")
+
+        _append_to_daily_note(md_file, "Archive/test.md")
+
+        daily_notes = list(tmp_path.glob("2*.md"))
+        assert len(daily_notes) == 0
 
 
 class TestApplyAnnotations:

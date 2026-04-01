@@ -46,7 +46,10 @@ def tidy_inbox() -> None:
             # Learn user-added tags before formatting annotations
             _learn_tags_from_file(md_file, original_file)
             _apply_annotations(md_file, original_file)
-            _move_email(md_file, get_archive_dir())
+            dest_dir = get_archive_dir()
+            dest_name = _unique_name(md_file.name, dest_dir)
+            _append_to_daily_note(md_file, dest_dir.name + "/" + dest_name)
+            _move_email(md_file, dest_dir)
 
         # Clean up the original copy
         if original_file.exists():
@@ -98,6 +101,108 @@ def _extract_gmail_id(md_file: Path) -> str | None:
     except OSError:
         pass
     return None
+
+
+_HIGHLIGHT_RE = re.compile(r"==(.+?)==")
+_NOTE_RE = re.compile(
+    r"^> \[!note\].*\n((?:> .*\n?)*)", re.MULTILINE
+)
+
+
+def _append_to_daily_note(md_file: Path, archive_rel_path: str) -> None:
+    """Extract highlights and notes from the file and append to today's daily note."""
+    try:
+        content = md_file.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    highlights = _HIGHLIGHT_RE.findall(content)
+    notes = []
+    for m in _NOTE_RE.finditer(content):
+        note_text = m.group(1).strip()
+        # Strip leading "> " from each line
+        cleaned = "\n".join(
+            line.removeprefix("> ").removeprefix(">")
+            for line in note_text.split("\n")
+        ).strip()
+        if cleaned:
+            notes.append(cleaned)
+
+    if not highlights and not notes:
+        return
+
+    # Extract the title from the first H1
+    title = md_file.stem
+    for line in content.split("\n"):
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+
+    # Build the daily note entry
+    entry_lines = [
+        "",
+        f"## [[Mail/{archive_rel_path}|{title}]]",
+        "",
+    ]
+
+    if highlights:
+        for h in highlights:
+            entry_lines.append(f"- =={h}==")
+        entry_lines.append("")
+
+    if notes:
+        for n in notes:
+            entry_lines.append(f"> {n}")
+            entry_lines.append("")
+
+    entry = "\n".join(entry_lines)
+
+    # Check if daily note feature is enabled
+    if not _daily_notes_enabled():
+        return
+
+    # Get or create today's daily note
+    from datetime import UTC, datetime
+
+    from gmail_sync.writer import get_vault_path
+
+    vault = get_vault_path()
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    daily_note = vault / f"{today}.md"
+
+    if daily_note.exists():
+        existing = daily_note.read_text(encoding="utf-8")
+        daily_note.write_text(
+            existing.rstrip() + "\n\n---\n" + entry, encoding="utf-8"
+        )
+    else:
+        daily_note.write_text(f"# {today}\n{entry}", encoding="utf-8")
+
+    log.info("Added %d highlights, %d notes to daily note %s", len(highlights), len(notes), today)
+
+
+_DAILY_NOTES_RE = re.compile(
+    r"^daily.notes:\s*(on|off|true|false|yes|no)",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _daily_notes_enabled() -> bool:
+    """Check if daily notes feature is enabled in Mail/Configuration/Settings.md."""
+    from gmail_sync.writer import get_config_dir
+
+    settings_path = get_config_dir() / "Settings.md"
+    if not settings_path.exists():
+        return True  # enabled by default
+
+    try:
+        text = settings_path.read_text(encoding="utf-8")
+        match = _DAILY_NOTES_RE.search(text)
+        if match:
+            return match.group(1).lower() in ("on", "true", "yes")
+        return True  # if setting not found, default on
+    except OSError:
+        return True
 
 
 def _learn_tags_from_file(modified_file: Path, original_file: Path) -> None:

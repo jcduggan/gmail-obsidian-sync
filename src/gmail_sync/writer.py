@@ -219,6 +219,21 @@ literary criticism
 """
 
 
+_SETTINGS_SEED = """\
+# Settings
+
+Toggle features on or off. Changes take effect on the next sync cycle.
+
+## Daily Notes
+
+When you archive an article with highlights or notes, they are
+automatically appended to your daily note (YYYY-MM-DD.md at the
+vault root) with a link back to the archived article.
+
+daily notes: on
+"""
+
+
 def seed_config_files() -> None:
     """Create default config files in Mail/Configuration/ if they don't exist."""
     config = get_config_dir()
@@ -238,6 +253,10 @@ def seed_config_files() -> None:
     tags_config = config / "Tags.md"
     if not tags_config.exists():
         tags_config.write_text(_TAGS_CONFIG_SEED)
+
+    settings = config / "Settings.md"
+    if not settings.exists():
+        settings.write_text(_SETTINGS_SEED)
 
 
 def get_trash_dir() -> Path:
