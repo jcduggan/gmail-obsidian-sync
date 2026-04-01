@@ -6,7 +6,13 @@ import shutil
 from pathlib import Path
 
 from gmail_sync.state import load_state, save_state
-from gmail_sync.writer import get_archive_dir, get_attachments_dir, get_inbox_dir, get_trash_dir
+from gmail_sync.writer import (
+    get_archive_dir,
+    get_attachments_dir,
+    get_inbox_dir,
+    get_originals_dir,
+    get_trash_dir,
+)
 
 log = logging.getLogger(__name__)
 
@@ -14,7 +20,8 @@ _CHECKED_RE = re.compile(r"^-\s*\[x\]\s*(read|delete)\s*$", re.IGNORECASE | re.M
 _GMAIL_ID_RE = re.compile(r"^gmail_id:\s*(\S+)", re.MULTILINE)
 
 # How many lines from the end to scan for checkboxes
-_FOOTER_LINES = 20
+# Must be large enough to cover: checkboxes + tags + fwd block + properties table
+_FOOTER_LINES = 50
 
 
 def tidy_inbox() -> None:
@@ -23,15 +30,25 @@ def tidy_inbox() -> None:
     state = load_state()
     moved = False
 
+    originals_dir = get_originals_dir()
+
     for md_file in sorted(inbox.glob("*.md")):
         action = _detect_action(md_file)
         if action is None:
             continue
         gmail_id = _extract_gmail_id(md_file)
+        original_file = originals_dir / md_file.name
+
         if action == "delete":
             _move_email(md_file, get_trash_dir())
         else:
+            _apply_annotations(md_file, original_file)
             _move_email(md_file, get_archive_dir())
+
+        # Clean up the original copy
+        if original_file.exists():
+            original_file.unlink()
+
         if gmail_id and gmail_id not in state.tidied_ids:
             state.tidied_ids.append(gmail_id)
         moved = True
@@ -78,6 +95,102 @@ def _extract_gmail_id(md_file: Path) -> str | None:
     except OSError:
         pass
     return None
+
+
+def _apply_annotations(modified_file: Path, original_file: Path) -> None:
+    """Diff modified file against original to detect and format user annotations.
+
+    Detects:
+    - Bold text that wasn't bold in the original → converted to ==highlight==
+    - Entirely new lines not in the original → wrapped in > [!note] callout
+    Adds a summary count after the H1 title.
+    """
+    if not original_file.exists():
+        return
+
+    try:
+        modified = modified_file.read_text(encoding="utf-8")
+        original = original_file.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    if modified == original:
+        return
+
+    import difflib
+
+    modified_lines = modified.split("\n")
+    original_lines = original.split("\n")
+    original_bold_spans = set(re.findall(r"\*\*(.+?)\*\*", original))
+
+    # Use SequenceMatcher to find truly new (inserted) lines
+    sm = difflib.SequenceMatcher(None, original_lines, modified_lines)
+    inserted_indices: set[int] = set()
+    for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
+        if tag == "insert":
+            inserted_indices.update(range(j1, j2))
+
+    highlight_count = 0
+    note_count = 0
+    result_lines = []
+
+    for idx, line in enumerate(modified_lines):
+        new_line = line
+
+        # Convert new bold spans to highlights
+        for bold_match in re.finditer(r"\*\*(.+?)\*\*", line):
+            bold_text = bold_match.group(1)
+            if bold_text not in original_bold_spans:
+                new_line = new_line.replace(
+                    f"**{bold_text}**", f"=={bold_text}==", 1
+                )
+                highlight_count += 1
+
+        # Wrap truly new (inserted) non-empty lines as user notes
+        stripped = line.strip()
+        if (
+            idx in inserted_indices
+            and stripped
+            and not stripped.startswith("#")
+            and not stripped.startswith(">")
+            and not stripped.startswith("-")
+            and not stripped.startswith("|")
+            and not re.match(r"^-\s*\[", stripped)
+        ):
+            new_line = f"> [!note] My note\n> {stripped}"
+            note_count += 1
+
+        result_lines.append(new_line)
+
+    if highlight_count == 0 and note_count == 0:
+        return
+
+    # Add annotation summary after the H1 title
+    summary_parts = []
+    if highlight_count:
+        s = "s" if highlight_count != 1 else ""
+        summary_parts.append(f"{highlight_count} highlight{s}")
+    if note_count:
+        s = "s" if note_count != 1 else ""
+        summary_parts.append(f"{note_count} note{s}")
+    summary = f"*{', '.join(summary_parts)}*"
+
+    final_lines = []
+    inserted_summary = False
+    for line in result_lines:
+        final_lines.append(line)
+        if not inserted_summary and line.startswith("# "):
+            final_lines.append("")
+            final_lines.append(summary)
+            inserted_summary = True
+
+    modified_file.write_text("\n".join(final_lines), encoding="utf-8")
+    log.info(
+        "Formatted annotations in %s: %d highlights, %d notes",
+        modified_file.name,
+        highlight_count,
+        note_count,
+    )
 
 
 def _move_email(md_file: Path, dest_dir: Path) -> None:

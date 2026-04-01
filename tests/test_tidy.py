@@ -2,7 +2,13 @@
 
 from pathlib import Path
 
-from gmail_sync.tidy import _detect_action, _move_email, _unique_name, tidy_inbox
+from gmail_sync.tidy import (
+    _apply_annotations,
+    _detect_action,
+    _move_email,
+    _unique_name,
+    tidy_inbox,
+)
 
 
 def _write_email(inbox: Path, name: str, read_checked: bool = False, delete_checked: bool = False):
@@ -159,3 +165,73 @@ class TestTidyInbox:
         inbox = tmp_path / "Mail" / "Inbox"
         inbox.mkdir(parents=True)
         tidy_inbox()  # should not raise
+
+
+class TestApplyAnnotations:
+    def test_bold_becomes_highlight(self, tmp_path):
+        original = "# Title\n\nSome normal text here.\n"
+        modified = "# Title\n\n**Some normal** text here.\n"
+
+        orig_file = tmp_path / "original.md"
+        mod_file = tmp_path / "modified.md"
+        orig_file.write_text(original)
+        mod_file.write_text(modified)
+
+        _apply_annotations(mod_file, orig_file)
+
+        result = mod_file.read_text()
+        assert "==Some normal==" in result
+        assert "**Some normal**" not in result
+        assert "*1 highlight*" in result
+
+    def test_new_paragraph_becomes_note(self, tmp_path):
+        original = "# Title\n\nOriginal text.\n"
+        modified = "# Title\n\nOriginal text.\nMy thought about this.\n"
+
+        orig_file = tmp_path / "original.md"
+        mod_file = tmp_path / "modified.md"
+        orig_file.write_text(original)
+        mod_file.write_text(modified)
+
+        _apply_annotations(mod_file, orig_file)
+
+        result = mod_file.read_text()
+        assert "[!note]" in result
+        assert "My thought about this." in result
+        assert "*1 note*" in result
+
+    def test_no_changes_no_formatting(self, tmp_path):
+        content = "# Title\n\nSame text.\n"
+
+        orig_file = tmp_path / "original.md"
+        mod_file = tmp_path / "modified.md"
+        orig_file.write_text(content)
+        mod_file.write_text(content)
+
+        _apply_annotations(mod_file, orig_file)
+
+        assert mod_file.read_text() == content
+
+    def test_missing_original_is_noop(self, tmp_path):
+        mod_file = tmp_path / "modified.md"
+        mod_file.write_text("# Title\n\n**Bold**\n")
+        orig_file = tmp_path / "nonexistent.md"
+
+        _apply_annotations(mod_file, orig_file)
+
+        assert "**Bold**" in mod_file.read_text()
+
+    def test_preserves_original_bold(self, tmp_path):
+        original = "# Title\n\n**Already bold** text.\n"
+        modified = "# Title\n\n**Already bold** text.\n"
+
+        orig_file = tmp_path / "original.md"
+        mod_file = tmp_path / "modified.md"
+        orig_file.write_text(original)
+        mod_file.write_text(modified)
+
+        _apply_annotations(mod_file, orig_file)
+
+        result = mod_file.read_text()
+        assert "**Already bold**" in result
+        assert "==" not in result

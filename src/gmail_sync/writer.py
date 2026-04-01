@@ -95,6 +95,41 @@ One per line.
 """
 
 
+_ANNOTATION_GUIDE_SEED = """\
+# How to Annotate
+
+While reading a newsletter in your Inbox, you can annotate it.
+When you check **read**, your annotations are automatically formatted.
+
+## Highlighting
+
+**Bold** any text you find interesting. Select it and tap **B**.
+
+When you mark the article as read, bolded passages are converted
+to ==highlighted text== so they stand out in your archive.
+
+## Notes
+
+Type your own thoughts anywhere in the article. Just tap between
+paragraphs and start writing.
+
+When you mark as read, your additions are wrapped in a callout:
+
+> [!note] My note
+> Your text appears like this in the archive
+
+## Tags
+
+Add tags in the Tags section near the bottom of each article.
+Use Obsidian's `#tag` format, like `#AI` or `#security`.
+
+## Summary
+
+After archiving, a count of your highlights and notes appears
+at the top of the article for quick reference.
+"""
+
+
 def seed_config_files() -> None:
     """Create default config files in Mail/Configuration/ if they don't exist."""
     config = get_config_dir()
@@ -107,12 +142,23 @@ def seed_config_files() -> None:
     if not own_addr.exists():
         own_addr.write_text(_OWN_ADDRESSES_SEED)
 
+    guide = config / "How to Annotate.md"
+    if not guide.exists():
+        guide.write_text(_ANNOTATION_GUIDE_SEED)
+
 
 def get_trash_dir() -> Path:
     """Get or create the Mail/Trash directory in the vault."""
     trash = get_mail_dir() / "Trash"
     trash.mkdir(parents=True, exist_ok=True)
     return trash
+
+
+def get_originals_dir() -> Path:
+    """Get or create the Mail/.originals directory (hidden from Obsidian)."""
+    originals = get_mail_dir() / ".originals"
+    originals.mkdir(parents=True, exist_ok=True)
+    return originals
 
 
 def get_attachments_dir(parent: Path | None = None) -> Path:
@@ -146,6 +192,10 @@ def write_email(email: EmailContent, attachment_data: dict[str, bytes] | None = 
     attachment_refs = _save_attachments(email, attachment_data)
     content = _format_markdown(email, attachment_refs)
     _atomic_write(filepath, content)
+
+    # Save an original copy for diffing when user annotates and archives
+    originals = get_originals_dir()
+    _atomic_write(originals / filename, content)
 
     return filepath
 
@@ -250,8 +300,16 @@ def _format_markdown(
         for att in email.attachments:
             lines.append(f"- {att.filename} ({att.mime_type}, {att.size} bytes)")
 
-    # Checkboxes
-    lines.extend(["", "---", "- [ ] read", "- [ ] delete"])
+    # Checkboxes and tags
+    lines.extend([
+        "",
+        "---",
+        "- [ ] read",
+        "- [ ] delete",
+        "",
+        "###### Tags",
+        "",
+    ])
 
     # Forwarded message header (foldable heading)
     if fwd_block:
