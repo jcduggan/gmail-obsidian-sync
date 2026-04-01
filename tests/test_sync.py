@@ -154,7 +154,7 @@ class TestProcessMessage:
         _process_message(service, "msg_1", state)
 
         assert "msg_1" in state.processed_ids
-        inbox = tmp_path / "Inbox"
+        inbox = tmp_path / "Mail" / "Inbox"
         assert inbox.exists()
         files = list(inbox.glob("*.md"))
         assert len(files) == 1

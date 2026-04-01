@@ -148,8 +148,8 @@ class TestWriteEmail:
         email = _make_email()
         path = write_email(email)
 
-        assert (tmp_path / "Inbox").is_dir()
-        assert path.parent == tmp_path / "Inbox"
+        assert (tmp_path / "Mail" / "Inbox").is_dir()
+        assert path.parent == tmp_path / "Mail" / "Inbox"
 
     def test_saves_attachments(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
@@ -163,7 +163,7 @@ class TestWriteEmail:
         attachment_data = {"att_1": b"test"}
         path = write_email(email, attachment_data)
 
-        att_path = tmp_path / "Inbox" / "_attachments" / "msg_test_123_doc.pdf"
+        att_path = tmp_path / "Mail" / "Inbox" / "_attachments" / "msg_test_123_doc.pdf"
         assert att_path.exists()
         assert att_path.read_bytes() == b"test"
 

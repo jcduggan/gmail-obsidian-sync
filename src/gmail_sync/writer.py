@@ -30,16 +30,46 @@ def get_vault_path() -> Path:
     return path
 
 
+MAIL_DIR = "Mail"
+
+
+def get_mail_dir() -> Path:
+    """Get or create the Mail parent directory in the vault."""
+    mail = get_vault_path() / MAIL_DIR
+    mail.mkdir(parents=True, exist_ok=True)
+    return mail
+
+
 def get_inbox_dir() -> Path:
-    """Get or create the Inbox directory in the vault."""
-    inbox = get_vault_path() / "Inbox"
+    """Get or create the Mail/Inbox directory in the vault."""
+    inbox = get_mail_dir() / "Inbox"
     inbox.mkdir(parents=True, exist_ok=True)
     return inbox
 
 
-def get_attachments_dir() -> Path:
-    """Get or create the attachments directory in the vault."""
-    att_dir = get_vault_path() / "Inbox" / "_attachments"
+def get_archive_dir() -> Path:
+    """Get or create the Mail/Archive directory in the vault."""
+    archive = get_mail_dir() / "Archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    return archive
+
+
+def get_trash_dir() -> Path:
+    """Get or create the Mail/Trash directory in the vault."""
+    trash = get_mail_dir() / "Trash"
+    trash.mkdir(parents=True, exist_ok=True)
+    return trash
+
+
+def get_attachments_dir(parent: Path | None = None) -> Path:
+    """Get or create the _attachments directory under the given parent.
+
+    Args:
+        parent: Directory to put _attachments in. Defaults to Mail/Inbox.
+    """
+    if parent is None:
+        parent = get_inbox_dir()
+    att_dir = parent / "_attachments"
     att_dir.mkdir(parents=True, exist_ok=True)
     return att_dir
 

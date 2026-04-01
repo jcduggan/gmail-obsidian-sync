@@ -49,6 +49,23 @@ def cmd_once(_args: argparse.Namespace) -> None:
     run_once()
 
 
+def cmd_tidy(_args: argparse.Namespace) -> None:
+    """Scan inbox for checked read/delete boxes and move files."""
+    _setup_logging()
+    from gmail_sync.tidy import tidy_inbox
+
+    tidy_inbox()
+
+
+def cmd_migrate(_args: argparse.Namespace) -> None:
+    """Migrate old Inbox/ folder to Mail/Inbox/."""
+    _setup_logging()
+    from gmail_sync.tidy import migrate_inbox
+
+    migrate_inbox()
+    print("Migration complete.")
+
+
 def cmd_install(args: argparse.Namespace) -> None:
     """Install as a macOS launchd service."""
     from gmail_sync.launchd import install
@@ -183,6 +200,8 @@ def main() -> None:
     )
 
     sub.add_parser("uninstall", help="Remove macOS launchd service")
+    sub.add_parser("tidy", help="Scan inbox for checked boxes and move files")
+    sub.add_parser("migrate", help="Migrate old Inbox/ to Mail/Inbox/")
     sub.add_parser("status", help="Show auth and sync status")
 
     args = parser.parse_args()
@@ -196,6 +215,8 @@ def main() -> None:
         "fetch-one": cmd_fetch_one,
         "run": cmd_run,
         "once": cmd_once,
+        "tidy": cmd_tidy,
+        "migrate": cmd_migrate,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "status": cmd_status,
